@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputFilter
 import android.view.Gravity
 import android.view.View
 import android.widget.AdapterView
@@ -24,8 +25,10 @@ import android.widget.Toast
 import com.apsu.gamestream.encoder.EncoderSelector
 import com.apsu.gamestream.model.CodecPreference
 import com.apsu.gamestream.model.ResolutionPreset
+import com.apsu.gamestream.model.ServerState
 import com.apsu.gamestream.model.StreamConfig
 import com.apsu.gamestream.nativebridge.NativeBridge
+import com.apsu.gamestream.pairing.PairingPin
 import com.apsu.gamestream.server.GameStreamProtocol
 import com.apsu.gamestream.server.Ports
 import com.apsu.gamestream.service.ProjectionStreamService
@@ -40,12 +43,14 @@ class MainActivity : Activity() {
     private lateinit var resolutionSpinner: Spinner
     private lateinit var fpsSpinner: Spinner
     private lateinit var bitrateInput: EditText
+    private lateinit var pairingPinInput: EditText
     private lateinit var audioSwitch: Switch
 
     private val statusPoll = object : Runnable {
         override fun run() {
             statusText.text = "${ProjectionStreamService.currentState}: ${ProjectionStreamService.lastMessage}"
             connectionText.text = connectionSummary()
+            syncPairingPinInput()
             handler.postDelayed(this, 1_000)
         }
     }
@@ -109,6 +114,19 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, 18)
         }
         root.addView(connectionText)
+
+        pairingPinInput = EditText(this).apply {
+            hint = "PIN from Artemis/Moonlight"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(InputFilter.LengthFilter(4))
+        }
+        root.addView(labeled("Pairing PIN shown by Artemis/Moonlight", pairingPinInput))
+
+        val applyPinButton = Button(this).apply {
+            text = "Use pairing PIN"
+            setOnClickListener { applyPairingPinFromInput() }
+        }
+        root.addView(applyPinButton)
 
         codecSpinner = spinner(CodecPreference.entries.map { it.name })
         codecSpinner.setSelection(CodecPreference.H264.ordinal)
@@ -215,6 +233,37 @@ class MainActivity : Activity() {
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
     }
 
+    private fun applyPairingPinFromInput() {
+        val pin = pairingPinInput.text.toString().trim()
+        if (!ProjectionStreamService.setPendingPairingPin(pin)) {
+            Toast.makeText(this, "Enter the 4-digit PIN shown by Artemis/Moonlight", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (ProjectionStreamService.currentState == ServerState.STREAMING ||
+            ProjectionStreamService.currentState == ServerState.READY ||
+            ProjectionStreamService.currentState == ServerState.WAITING_FOR_PROJECTION
+        ) {
+            startService(ProjectionStreamService.setPinIntent(this, pin))
+        }
+        Toast.makeText(this, "Pairing PIN active", Toast.LENGTH_SHORT).show()
+        connectionText.text = connectionSummary()
+    }
+
+    private fun syncPairingPinInput() {
+        if (!::pairingPinInput.isInitialized || pairingPinInput.hasFocus()) return
+        val currentText = pairingPinInput.text.toString()
+        val pin = PairingPin.normalize(ProjectionStreamService.currentPin)
+        if (pin == null) {
+            if (currentText == "----") {
+                pairingPinInput.setText("")
+            }
+            return
+        }
+        if (pin != currentText) {
+            pairingPinInput.setText(pin)
+        }
+    }
+
     private fun selectedConfig(): StreamConfig {
         val resolution = ResolutionPreset.DEFAULTS[resolutionSpinner.selectedItemPosition]
         val fps = fpsSpinner.selectedItem.toString().toInt()
@@ -253,7 +302,8 @@ class MainActivity : Activity() {
 
     private fun connectionSummary(): String {
         val ips = localIpv4Addresses().ifEmpty { listOf("IP unavailable") }
-        return "PIN: ${ProjectionStreamService.currentPin}\n" +
+        val activePin = PairingPin.normalize(ProjectionStreamService.currentPin) ?: "not set"
+        return "Pairing PIN active: $activePin\n" +
             "Protocol ${GameStreamProtocol.APP_VERSION} legacy TCP control\n" +
             "HTTP ${Ports.HTTP}, HTTPS ${Ports.HTTPS}, RTSP ${Ports.RTSP}, Video UDP ${Ports.VIDEO}\n" +
             "Control TCP ${Ports.LEGACY_CONTROL}, Input TCP ${Ports.LEGACY_INPUT}, Audio UDP ${Ports.AUDIO}\n" +

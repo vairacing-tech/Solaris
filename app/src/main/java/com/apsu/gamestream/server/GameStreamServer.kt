@@ -10,8 +10,9 @@ import java.util.concurrent.atomic.AtomicLong
 
 class GameStreamServer(
     context: Context,
-    private val pin: String,
+    initialPin: String?,
     private val onIdrRequested: () -> Unit,
+    private val onPinChanged: (String) -> Unit,
     private val onLog: (String) -> Unit,
 ) {
     private val appContext = context.applicationContext
@@ -23,6 +24,7 @@ class GameStreamServer(
     private var inputSinkServer: TcpInputSinkServer? = null
     private var nvHttpServer: NvHttpServer? = null
     private var rtspServer: RtspServer? = null
+    @Volatile private var activePin: String? = initialPin
 
     fun start(config: StreamConfig, activeMime: String) {
         if (nvHttpServer != null || rtspServer != null) return
@@ -31,7 +33,7 @@ class GameStreamServer(
         val pairingProtocol = PairingProtocol(
             serverIdentity = identity,
             pairingStore = pairingStore,
-            pinProvider = { pin },
+            pinProvider = { activePin },
             hash = GameStreamProtocol.pairingHash,
         )
         videoTransport = VideoRtpTransport(
@@ -65,6 +67,7 @@ class GameStreamServer(
             pairingProtocol = pairingProtocol,
             currentConfig = { config },
             activeVideoMime = { activeMime },
+            onPinReceived = { pin -> setPairingPin(pin) },
             onLaunchRequested = {
                 onLog("Launch requested by client")
                 true
@@ -81,7 +84,14 @@ class GameStreamServer(
             },
             onLog = onLog,
         ).also { it.start() }
-        onLog("PIN $pin; GameStream servers listening on ${Ports.HTTP}/${Ports.HTTPS}/${Ports.RTSP}/${Ports.VIDEO}")
+        val pinState = activePin ?: "not set"
+        onLog("Pairing PIN $pinState; GameStream servers listening on ${Ports.HTTP}/${Ports.HTTPS}/${Ports.RTSP}/${Ports.VIDEO}")
+    }
+
+    fun setPairingPin(pin: String) {
+        activePin = pin
+        onPinChanged(pin)
+        onLog("Pairing PIN updated")
     }
 
     fun stop() {

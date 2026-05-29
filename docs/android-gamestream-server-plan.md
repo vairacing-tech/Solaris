@@ -57,6 +57,8 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
 - Pairing:
   - certificado self-signed via AndroidKeyStore
   - flujo `getservercert`, `clientchallenge`, `serverchallengeresp`, `clientpairingsecret`, `pairchallenge`
+  - el PIN lo define el cliente Moonlight/Artemis; la app Android host debe usar ese PIN activo antes de `getservercert`
+  - la UI permite introducir el PIN mostrado por Artemis/Moonlight y el endpoint `/pin?pin=1234` tambien puede actualizarlo
   - SHA-1 para perfil legacy generation 4
   - SHA-256 disponible en el codigo para perfiles modernos
 - Video RTP:
@@ -92,12 +94,13 @@ Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiend
 4. Pulsar `Start server`.
 5. Aceptar el permiso de captura de pantalla.
 6. En Moonlight/Artemis, agregar el host usando la IP mostrada en la app.
-7. Introducir el PIN mostrado por la app cuando Moonlight lo pida.
-8. Lanzar `Android Screen`.
+7. En Artemis/Moonlight, iniciar pairing y leer el PIN de 4 digitos que muestra el cliente.
+8. En Apsu, escribir ese PIN en `Pairing PIN shown by Artemis/Moonlight` y pulsar `Use pairing PIN`.
+9. Confirmar el pairing en Artemis/Moonlight y lanzar `Android Screen`.
 
 ## Limitaciones reales del APK actual
 
-- No hay validacion runtime todavia: no hay dispositivo ADB conectado en este entorno.
+- Validado en Odin 2 Portal por ADB para arranque de servicio, puertos NVHTTP/RTSP/RTP y encoder Qualcomm H.264.
 - El control/input remoto se acepta para que Moonlight no falle, pero se ignora; no inyecta tactil, mando, teclado ni raton en Android.
 - Audio de red no esta implementado. La app puede capturar PCM local con `AudioPlaybackCaptureConfiguration`, pero aun no codifica Opus ni envia RTP audio. Si Android niega o bloquea la captura de audio, el video continua.
 - No hay FEC ni retransmision avanzada en video.

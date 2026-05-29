@@ -23,8 +23,8 @@ import com.apsu.gamestream.encoder.EncoderSelector
 import com.apsu.gamestream.encoder.EncoderSession
 import com.apsu.gamestream.model.ServerState
 import com.apsu.gamestream.model.StreamConfig
+import com.apsu.gamestream.pairing.PairingPin
 import com.apsu.gamestream.server.GameStreamServer
-import java.security.SecureRandom
 
 class ProjectionStreamService : Service() {
     private var projection: MediaProjection? = null
@@ -50,6 +50,7 @@ class ProjectionStreamService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startFromIntent(intent)
+            ACTION_SET_PAIRING_PIN -> updatePairingPin(intent.getStringExtra(EXTRA_PAIRING_PIN), "UI")
             ACTION_STOP -> {
                 stopStreaming()
                 stopSelf()
@@ -94,12 +95,15 @@ class ProjectionStreamService : Service() {
             projection.registerCallback(projectionCallback, mainHandler)
             this.projection = projection
 
-            val pin = generatePin()
-            currentPin = pin
+            val pin = PairingPin.normalize(currentPin)
+            if (pin == null) {
+                log("Pairing PIN not set; enter the PIN shown by Artemis/Moonlight")
+            }
             val server = GameStreamServer(
                 context = applicationContext,
-                pin = pin,
+                initialPin = pin,
                 onIdrRequested = { encoderSession?.requestSyncFrame() },
+                onPinChanged = { newPin -> currentPin = newPin },
                 onLog = { log(it) },
             )
             server.start(config, encoderInfo.mime)
@@ -174,6 +178,16 @@ class ProjectionStreamService : Service() {
         updateStatus(ServerState.IDLE, "Stopped")
         currentPin = "----"
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun updatePairingPin(pin: String?, source: String) {
+        val normalized = PairingPin.normalize(pin) ?: run {
+            log("Rejected invalid pairing PIN from $source")
+            return
+        }
+        currentPin = normalized
+        gameStreamServer?.setPairingPin(normalized)
+        log("Pairing PIN set from $source")
     }
 
     private fun startInForeground(text: String) {
@@ -262,7 +276,9 @@ class ProjectionStreamService : Service() {
         private const val NOTIFICATION_ID = 42
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
+        private const val EXTRA_PAIRING_PIN = "pairing_pin"
         const val ACTION_START = "com.apsu.gamestream.START"
+        const val ACTION_SET_PAIRING_PIN = "com.apsu.gamestream.SET_PAIRING_PIN"
         const val ACTION_STOP = "com.apsu.gamestream.STOP"
 
         @Volatile var currentState: ServerState = ServerState.IDLE
@@ -271,6 +287,18 @@ class ProjectionStreamService : Service() {
             private set
         @Volatile var currentPin: String = "----"
             private set
+
+        fun setPendingPairingPin(pin: String): Boolean {
+            val normalized = PairingPin.normalize(pin) ?: return false
+            currentPin = normalized
+            lastMessage = "Pairing PIN ready"
+            return true
+        }
+
+        fun setPinIntent(context: Context, pin: String): Intent =
+            Intent(context, ProjectionStreamService::class.java)
+                .setAction(ACTION_SET_PAIRING_PIN)
+                .putExtra(EXTRA_PAIRING_PIN, pin)
 
         fun startIntent(context: Context, resultCode: Int, data: Intent, config: StreamConfig): Intent {
             val intent = Intent(context, ProjectionStreamService::class.java)
@@ -282,12 +310,5 @@ class ProjectionStreamService : Service() {
 
         fun stopIntent(context: Context): Intent =
             Intent(context, ProjectionStreamService::class.java).setAction(ACTION_STOP)
-
-        private fun generatePin(): String {
-            val random = SecureRandom()
-            return buildString {
-                repeat(4) { append(random.nextInt(10)) }
-            }
-        }
     }
 }

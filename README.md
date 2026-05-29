@@ -11,6 +11,7 @@ Servidor GameStream Android experimental para streaming desde un dispositivo And
 - Configuracion de resolucion, FPS y bitrate desde la app.
 - NVHTTP, pairing, RTSP y RTP video MVP.
 - Perfil GameStream legacy `4.1.1.0` para evitar ENet/control cifrado en esta primera version.
+- Pairing con PIN definido por Artemis/Moonlight: introduce en la app el PIN que muestra el cliente antes de confirmar el pairing.
 
 ## Build
 

@@ -22,7 +22,7 @@ enum class PairingHash(private val algorithm: String, val hashLength: Int) {
 class PairingProtocol(
     private val serverIdentity: ServerIdentity,
     private val pairingStore: PairingStore,
-    private val pinProvider: () -> String,
+    private val pinProvider: () -> String?,
     private val hash: PairingHash = PairingHash.SHA256,
 ) {
     private val sessions = mutableMapOf<String, PairSession>()
@@ -52,7 +52,9 @@ class PairingProtocol(
         val salt = Hex.decode(args["salt"] ?: return error(400, "Missing salt"))
         val clientCertText = Hex.decode(args["clientcert"] ?: return error(400, "Missing clientcert"))
         val clientCert = parseCertificate(clientCertText)
-        val aesKey = hash.digest(salt + pinProvider().toByteArray(Charsets.UTF_8)).copyOf(16)
+        val pin = PairingPin.normalize(pinProvider())
+            ?: return error(401, "Missing pairing PIN from client")
+        val aesKey = hash.digest(salt + pin.toByteArray(Charsets.UTF_8)).copyOf(16)
         sessions[uniqueId] = PairSession(uniqueId, aesKey, clientCert)
         return """
             <?xml version="1.0" encoding="utf-8"?>

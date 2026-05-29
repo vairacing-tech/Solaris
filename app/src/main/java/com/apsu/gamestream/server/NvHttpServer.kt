@@ -2,6 +2,7 @@ package com.apsu.gamestream.server
 
 import com.apsu.gamestream.crypto.ServerIdentity
 import com.apsu.gamestream.model.StreamConfig
+import com.apsu.gamestream.pairing.PairingPin
 import com.apsu.gamestream.pairing.PairingProtocol
 import com.apsu.gamestream.pairing.PairingStore
 import java.io.BufferedReader
@@ -27,6 +28,7 @@ class NvHttpServer(
     private val pairingProtocol: PairingProtocol,
     private val currentConfig: () -> StreamConfig,
     private val activeVideoMime: () -> String,
+    private val onPinReceived: (String) -> Unit,
     private val onLaunchRequested: () -> Boolean,
     private val onLog: (String) -> Unit,
 ) {
@@ -103,7 +105,7 @@ class NvHttpServer(
             "/launch", "/launch.xml" -> launch(localAddress)
             "/resume", "/resume.xml" -> launch(localAddress, resume = true)
             "/cancel", "/cancel.xml" -> okXml("cancel")
-            "/pin", "/pin.xml" -> okXml("pin")
+            "/pin", "/pin.xml" -> pin(query)
             else -> errorXml(404, "Unknown endpoint: $path")
         }
 
@@ -134,7 +136,7 @@ class NvHttpServer(
               <HttpsPort>${Ports.HTTPS}</HttpsPort>
               <ExternalPort>${Ports.HTTP}</ExternalPort>
               <RtspPort>${Ports.RTSP}</RtspPort>
-              <PairStatus>${if (paired || secure) 1 else 0}</PairStatus>
+              <PairStatus>${if (paired) 1 else 0}</PairStatus>
               <currentgame>0</currentgame>
               <state>MJOLNIR_SERVER_AVAILABLE</state>
               <MaxLumaPixelsH264>1869449984</MaxLumaPixelsH264>
@@ -166,6 +168,14 @@ class NvHttpServer(
     private fun pair(query: Map<String, String>): String {
         val uniqueId = query["uniqueid"] ?: "0123456789ABCDEF"
         return pairingProtocol.handle(uniqueId, query)
+    }
+
+    private fun pin(query: Map<String, String>): String {
+        val pin = PairingPin.fromQuery(query)
+            ?: return errorXml(400, "PIN must be exactly 4 digits")
+        onPinReceived(pin)
+        onLog("Pairing PIN received via NVHTTP")
+        return okXml("pin")
     }
 
     private fun launch(localAddress: String, resume: Boolean = false): String {
