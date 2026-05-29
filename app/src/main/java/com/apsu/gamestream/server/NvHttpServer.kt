@@ -50,7 +50,7 @@ class NvHttpServer(
             InetAddress.getByName("0.0.0.0"),
         ) as SSLServerSocket).also {
             it.needClientAuth = false
-            it.wantClientAuth = true
+            it.wantClientAuth = false
             it.soTimeout = 1_000
         }
         httpThread = acceptLoop("apsu-nvhttp", httpSocket, secure = false)

@@ -63,6 +63,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - flujo `getservercert`, `clientchallenge`, `serverchallengeresp`, `clientpairingsecret`, `pairchallenge`
   - el PIN lo define el cliente Moonlight/Artemis; la app Android host debe usar ese PIN activo antes de `getservercert`
   - si `getservercert` llega sin PIN activo, el servidor mantiene la peticion abierta hasta 90 segundos para que el usuario escriba el PIN mostrado por Artemis/Moonlight
+  - TLS no solicita certificado de cliente para evitar que Android rechace certificados self-signed de Artemis antes de completar NVHTTP; la validacion criptografica se mantiene dentro del pairing
   - la UI permite introducir el PIN mostrado por Artemis/Moonlight y el endpoint `/pin?pin=1234` tambien puede actualizarlo
   - SHA-1 para perfil legacy generation 4
   - SHA-256 disponible en el codigo para perfiles modernos
