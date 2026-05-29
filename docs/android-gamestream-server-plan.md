@@ -54,10 +54,13 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - Audio ping sink en UDP `48000`
   - Control legacy en TCP `47995`
   - Input legacy sink en TCP `35043`
+  - anuncio mDNS `_nvstream._tcp` en el puerto `47989`
 - Pairing:
   - certificado self-signed via AndroidKeyStore
+  - `uniqueid` persistente en preferencias locales para que Artemis/Moonlight no trate cada arranque como un host nuevo
   - flujo `getservercert`, `clientchallenge`, `serverchallengeresp`, `clientpairingsecret`, `pairchallenge`
   - el PIN lo define el cliente Moonlight/Artemis; la app Android host debe usar ese PIN activo antes de `getservercert`
+  - si `getservercert` llega sin PIN activo, el servidor mantiene la peticion abierta hasta 90 segundos para que el usuario escriba el PIN mostrado por Artemis/Moonlight
   - la UI permite introducir el PIN mostrado por Artemis/Moonlight y el endpoint `/pin?pin=1234` tambien puede actualizarlo
   - SHA-1 para perfil legacy generation 4
   - SHA-256 disponible en el codigo para perfiles modernos

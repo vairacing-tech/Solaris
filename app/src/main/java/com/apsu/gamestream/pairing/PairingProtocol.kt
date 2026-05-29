@@ -53,7 +53,7 @@ class PairingProtocol(
         val clientCertText = Hex.decode(args["clientcert"] ?: return error(400, "Missing clientcert"))
         val clientCert = parseCertificate(clientCertText)
         val pin = PairingPin.normalize(pinProvider())
-            ?: return error(401, "Missing pairing PIN from client")
+            ?: return error(408, "Timed out waiting for pairing PIN")
         val aesKey = hash.digest(salt + pin.toByteArray(Charsets.UTF_8)).copyOf(16)
         sessions[uniqueId] = PairSession(uniqueId, aesKey, clientCert)
         return """

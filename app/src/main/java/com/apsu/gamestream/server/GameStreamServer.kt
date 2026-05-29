@@ -1,9 +1,11 @@
 package com.apsu.gamestream.server
 
 import android.content.Context
+import android.os.SystemClock
 import com.apsu.gamestream.crypto.ServerIdentity
 import com.apsu.gamestream.encoder.EncodedFrame
 import com.apsu.gamestream.model.StreamConfig
+import com.apsu.gamestream.pairing.PairingPin
 import com.apsu.gamestream.pairing.PairingProtocol
 import com.apsu.gamestream.pairing.PairingStore
 import java.util.concurrent.atomic.AtomicLong
@@ -16,15 +18,18 @@ class GameStreamServer(
     private val onLog: (String) -> Unit,
 ) {
     private val appContext = context.applicationContext
+    private val hostIdentity = HostIdentity(appContext)
     private val pairingStore = PairingStore(context.applicationContext)
     private val frameCount = AtomicLong()
     private var videoTransport: VideoRtpTransport? = null
     private var audioPingSink: AudioPingSink? = null
     private var legacyControlServer: LegacyControlTcpServer? = null
     private var inputSinkServer: TcpInputSinkServer? = null
+    private var mdnsAdvertiser: MdnsAdvertiser? = null
     private var nvHttpServer: NvHttpServer? = null
     private var rtspServer: RtspServer? = null
     @Volatile private var activePin: String? = initialPin
+    private val pinLock = Object()
 
     fun start(config: StreamConfig, activeMime: String) {
         if (nvHttpServer != null || rtspServer != null) return
@@ -33,7 +38,7 @@ class GameStreamServer(
         val pairingProtocol = PairingProtocol(
             serverIdentity = identity,
             pairingStore = pairingStore,
-            pinProvider = { activePin },
+            pinProvider = { awaitPairingPin() },
             hash = GameStreamProtocol.pairingHash,
         )
         videoTransport = VideoRtpTransport(
@@ -65,6 +70,7 @@ class GameStreamServer(
             serverIdentity = identity,
             pairingStore = pairingStore,
             pairingProtocol = pairingProtocol,
+            uniqueId = hostIdentity.uniqueId,
             currentConfig = { config },
             activeVideoMime = { activeMime },
             onPinReceived = { pin -> setPairingPin(pin) },
@@ -72,6 +78,12 @@ class GameStreamServer(
                 onLog("Launch requested by client")
                 true
             },
+            onLog = onLog,
+        ).also { it.start() }
+        mdnsAdvertiser = MdnsAdvertiser(
+            context = appContext,
+            serviceName = "Apsu Android",
+            port = Ports.HTTP,
             onLog = onLog,
         ).also { it.start() }
         rtspServer = RtspServer(
@@ -89,14 +101,33 @@ class GameStreamServer(
     }
 
     fun setPairingPin(pin: String) {
-        activePin = pin
+        synchronized(pinLock) {
+            activePin = pin
+            pinLock.notifyAll()
+        }
         onPinChanged(pin)
         onLog("Pairing PIN updated")
+    }
+
+    private fun awaitPairingPin(timeoutMillis: Long = PAIRING_PIN_TIMEOUT_MILLIS): String? {
+        PairingPin.normalize(activePin)?.let { return it }
+        onLog("Waiting for pairing PIN from Artemis/Moonlight")
+        val deadline = SystemClock.elapsedRealtime() + timeoutMillis
+        synchronized(pinLock) {
+            while (true) {
+                PairingPin.normalize(activePin)?.let { return it }
+                val remaining = deadline - SystemClock.elapsedRealtime()
+                if (remaining <= 0L) return null
+                runCatching { pinLock.wait(remaining) }
+            }
+        }
     }
 
     fun stop() {
         nvHttpServer?.stop()
         nvHttpServer = null
+        mdnsAdvertiser?.stop()
+        mdnsAdvertiser = null
         rtspServer?.stop()
         rtspServer = null
         inputSinkServer?.stop()
@@ -116,5 +147,9 @@ class GameStreamServer(
         if (count == 1L || count % 300L == 0L) {
             onLog("Encoded frame $count, ${frame.bytes.size} bytes, flags=${frame.flags}")
         }
+    }
+
+    companion object {
+        private const val PAIRING_PIN_TIMEOUT_MILLIS = 90_000L
     }
 }

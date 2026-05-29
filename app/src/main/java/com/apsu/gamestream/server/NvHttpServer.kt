@@ -15,7 +15,6 @@ import java.net.Socket
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLServerSocket
 import kotlin.concurrent.thread
@@ -26,6 +25,7 @@ class NvHttpServer(
     private val serverIdentity: ServerIdentity,
     private val pairingStore: PairingStore,
     private val pairingProtocol: PairingProtocol,
+    private val uniqueId: String,
     private val currentConfig: () -> StreamConfig,
     private val activeVideoMime: () -> String,
     private val onPinReceived: (String) -> Unit,
@@ -37,7 +37,6 @@ class NvHttpServer(
     private var httpsSocket: ServerSocket? = null
     private var httpThread: Thread? = null
     private var httpsThread: Thread? = null
-    private val uniqueId = UUID.randomUUID().toString().replace("-", "")
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -93,9 +92,9 @@ class NvHttpServer(
         val uri = URI("http://localhost$target")
         val query = parseQuery(uri.rawQuery)
         val path = uri.path.lowercase()
-        val localAddress = socket.localAddress.hostAddress ?: "127.0.0.1"
+        val localAddress = socket.localAddress.hostAddress?.takeUnless { it == "0.0.0.0" } ?: "127.0.0.1"
         val body = when (path) {
-            "/serverinfo", "/serverinfo.xml" -> serverInfo(secure)
+            "/serverinfo", "/serverinfo.xml" -> serverInfo(localAddress)
             "/applist", "/applist.xml" -> appList()
             "/pair", "/pair.xml" -> pair(query)
             "/unpair", "/unpair.xml" -> {
@@ -119,7 +118,7 @@ class NvHttpServer(
         writer.flush()
     }
 
-    private fun serverInfo(secure: Boolean): String {
+    private fun serverInfo(localAddress: String): String {
         val paired = pairingStore.list().isNotEmpty()
         val config = currentConfig()
         val codecSupport = when (activeVideoMime()) {
@@ -143,7 +142,7 @@ class NvHttpServer(
               <MaxLumaPixelsHEVC>${if (activeVideoMime() == "video/hevc") "1869449984" else "0"}</MaxLumaPixelsHEVC>
               <ServerCodecModeSupport>$codecSupport</ServerCodecModeSupport>
               <gputype>Android Hardware Encoder</gputype>
-              <LocalIP>0.0.0.0</LocalIP>
+              <LocalIP>$localAddress</LocalIP>
               <mac>00:00:00:00:00:00</mac>
               <codec>${config.codecPreference.name}</codec>
               <height>${config.height}</height>
