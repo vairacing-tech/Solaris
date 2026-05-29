@@ -150,6 +150,7 @@ class ProjectionStreamService : Service() {
             )
             startInForeground("Streaming ${config.resolutionLabel} ${config.fps}fps")
         } catch (t: Throwable) {
+            Log.e(TAG, "Failed to start stream", t)
             updateStatus(ServerState.ERROR, t.message ?: "Failed to start stream")
             stopStreaming()
             stopSelf()

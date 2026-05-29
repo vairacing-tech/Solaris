@@ -12,9 +12,11 @@ import java.security.SecureRandom
 import java.security.Signature
 import java.security.cert.X509Certificate
 import java.util.Calendar
-import javax.net.ssl.KeyManagerFactory
+import java.net.Socket
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLServerSocketFactory
+import javax.net.ssl.X509ExtendedKeyManager
 import javax.security.auth.x500.X500Principal
 
 class ServerIdentity private constructor(
@@ -36,8 +38,7 @@ class ServerIdentity private constructor(
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val ALIAS = "apsu-gamestream-server"
-        private val keyPassword = CharArray(0)
+        private const val ALIAS = "apsu-gamestream-server-v2"
 
         fun load(context: Context): ServerIdentity {
             require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -53,16 +54,8 @@ class ServerIdentity private constructor(
             val privateKey = refreshedStore.getKey(ALIAS, null) as PrivateKey
             val certificate = refreshedStore.getCertificate(ALIAS) as X509Certificate
 
-            val tlsKeyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
-                load(null, null)
-                setKeyEntry(ALIAS, privateKey, keyPassword, arrayOf(certificate))
-            }
-            val keyManagerFactory =
-                KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply {
-                    init(tlsKeyStore, keyPassword)
-                }
             val sslContext = SSLContext.getInstance("TLS").apply {
-                init(keyManagerFactory.keyManagers, null, SecureRandom())
+                init(arrayOf(AndroidKeyStoreKeyManager(privateKey, certificate)), null, SecureRandom())
             }
 
             context.applicationContext.getSharedPreferences("server-identity", Context.MODE_PRIVATE)
@@ -75,6 +68,47 @@ class ServerIdentity private constructor(
                 privateKey = privateKey,
                 sslServerSocketFactory = sslContext.serverSocketFactory,
             )
+        }
+
+        private class AndroidKeyStoreKeyManager(
+            private val privateKey: PrivateKey,
+            private val certificate: X509Certificate,
+        ) : X509ExtendedKeyManager() {
+            override fun getClientAliases(keyType: String?, issuers: Array<out java.security.Principal>?): Array<String>? =
+                null
+
+            override fun chooseClientAlias(
+                keyType: Array<out String>?,
+                issuers: Array<out java.security.Principal>?,
+                socket: Socket?,
+            ): String? = null
+
+            override fun getServerAliases(keyType: String?, issuers: Array<out java.security.Principal>?): Array<String> =
+                arrayOf(ALIAS)
+
+            override fun chooseServerAlias(
+                keyType: String?,
+                issuers: Array<out java.security.Principal>?,
+                socket: Socket?,
+            ): String = ALIAS
+
+            override fun chooseEngineServerAlias(
+                keyType: String?,
+                issuers: Array<out java.security.Principal>?,
+                engine: SSLEngine?,
+            ): String = ALIAS
+
+            override fun chooseEngineClientAlias(
+                keyType: Array<out String>?,
+                issuers: Array<out java.security.Principal>?,
+                engine: SSLEngine?,
+            ): String? = null
+
+            override fun getCertificateChain(alias: String?): Array<X509Certificate> =
+                arrayOf(certificate)
+
+            override fun getPrivateKey(alias: String?): PrivateKey =
+                privateKey
         }
 
         private fun createKey() {
@@ -91,9 +125,19 @@ class ServerIdentity private constructor(
                 .setCertificateSerialNumber(BigInteger(64, SecureRandom()).abs().plus(BigInteger.ONE))
                 .setCertificateNotBefore(now.time)
                 .setCertificateNotAfter(end.time)
-                .setDigests(KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
+                .setDigests(
+                    KeyProperties.DIGEST_NONE,
+                    KeyProperties.DIGEST_SHA1,
+                    KeyProperties.DIGEST_SHA256,
+                    KeyProperties.DIGEST_SHA384,
+                    KeyProperties.DIGEST_SHA512,
+                )
                 .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_RSA_PKCS1)
+                .setEncryptionPaddings(
+                    KeyProperties.ENCRYPTION_PADDING_NONE,
+                    KeyProperties.ENCRYPTION_PADDING_RSA_PKCS1,
+                )
+                .setRandomizedEncryptionRequired(false)
                 .build()
 
             KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, ANDROID_KEYSTORE).apply {
