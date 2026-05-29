@@ -1,0 +1,211 @@
+package com.apsu.gamestream.server
+
+import com.apsu.gamestream.crypto.ServerIdentity
+import com.apsu.gamestream.model.StreamConfig
+import com.apsu.gamestream.pairing.PairingProtocol
+import com.apsu.gamestream.pairing.PairingStore
+import java.io.BufferedReader
+import java.io.BufferedWriter
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.SSLServerSocket
+import kotlin.concurrent.thread
+
+class NvHttpServer(
+    private val httpPort: Int,
+    private val httpsPort: Int,
+    private val serverIdentity: ServerIdentity,
+    private val pairingStore: PairingStore,
+    private val pairingProtocol: PairingProtocol,
+    private val currentConfig: () -> StreamConfig,
+    private val activeVideoMime: () -> String,
+    private val onLaunchRequested: () -> Boolean,
+    private val onLog: (String) -> Unit,
+) {
+    private val running = AtomicBoolean(false)
+    private var httpSocket: ServerSocket? = null
+    private var httpsSocket: ServerSocket? = null
+    private var httpThread: Thread? = null
+    private var httpsThread: Thread? = null
+    private val uniqueId = UUID.randomUUID().toString().replace("-", "")
+
+    fun start() {
+        if (!running.compareAndSet(false, true)) return
+        httpSocket = ServerSocket(httpPort, 50, InetAddress.getByName("0.0.0.0")).also {
+            it.soTimeout = 1_000
+        }
+        httpsSocket = (serverIdentity.sslServerSocketFactory.createServerSocket(
+            httpsPort,
+            50,
+            InetAddress.getByName("0.0.0.0"),
+        ) as SSLServerSocket).also {
+            it.needClientAuth = false
+            it.wantClientAuth = true
+            it.soTimeout = 1_000
+        }
+        httpThread = acceptLoop("apsu-nvhttp", httpSocket, secure = false)
+        httpsThread = acceptLoop("apsu-nvhttps", httpsSocket, secure = true)
+        onLog("NVHTTP listening on TCP $httpPort and TLS $httpsPort")
+    }
+
+    fun stop() {
+        running.set(false)
+        runCatching { httpSocket?.close() }
+        runCatching { httpsSocket?.close() }
+        httpSocket = null
+        httpsSocket = null
+        httpThread = null
+        httpsThread = null
+    }
+
+    private fun acceptLoop(name: String, serverSocket: ServerSocket?, secure: Boolean): Thread =
+        thread(name = name, isDaemon = true) {
+            while (running.get()) {
+                val socket = runCatching { serverSocket?.accept() }.getOrNull() ?: continue
+                thread(name = "$name-client", isDaemon = true) {
+                    runCatching { handle(socket, secure) }
+                        .onFailure { onLog("${if (secure) "NVHTTPS" else "NVHTTP"} error: ${it.message}") }
+                    runCatching { socket.close() }
+                }
+            }
+        }
+
+    private fun handle(socket: Socket, secure: Boolean) {
+        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+        val requestLine = reader.readLine() ?: return
+        while (true) {
+            val line = reader.readLine() ?: break
+            if (line.isEmpty()) break
+        }
+
+        val parts = requestLine.split(" ")
+        val target = parts.getOrNull(1) ?: "/"
+        val uri = URI("http://localhost$target")
+        val query = parseQuery(uri.rawQuery)
+        val path = uri.path.lowercase()
+        val localAddress = socket.localAddress.hostAddress ?: "127.0.0.1"
+        val body = when (path) {
+            "/serverinfo", "/serverinfo.xml" -> serverInfo(secure)
+            "/applist", "/applist.xml" -> appList()
+            "/pair", "/pair.xml" -> pair(query)
+            "/unpair", "/unpair.xml" -> {
+                pairingProtocol.unpair()
+                okXml("unpair")
+            }
+            "/launch", "/launch.xml" -> launch(localAddress)
+            "/resume", "/resume.xml" -> launch(localAddress, resume = true)
+            "/cancel", "/cancel.xml" -> okXml("cancel")
+            "/pin", "/pin.xml" -> okXml("pin")
+            else -> errorXml(404, "Unknown endpoint: $path")
+        }
+
+        val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))
+        writer.write("HTTP/1.1 200 OK\r\n")
+        writer.write("Content-Type: text/xml; charset=utf-8\r\n")
+        writer.write("Content-Length: ${body.toByteArray(StandardCharsets.UTF_8).size}\r\n")
+        writer.write("Connection: close\r\n")
+        writer.write("\r\n")
+        writer.write(body)
+        writer.flush()
+    }
+
+    private fun serverInfo(secure: Boolean): String {
+        val paired = pairingStore.list().isNotEmpty()
+        val config = currentConfig()
+        val codecSupport = when (activeVideoMime()) {
+            "video/hevc" -> 0x00000101
+            else -> 0x00000001
+        }
+        return """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root status_code="200">
+              <hostname>Apsu Android</hostname>
+              <appversion>${GameStreamProtocol.APP_VERSION}</appversion>
+              <GfeVersion>${GameStreamProtocol.GFE_VERSION}</GfeVersion>
+              <uniqueid>$uniqueId</uniqueid>
+              <HttpsPort>${Ports.HTTPS}</HttpsPort>
+              <ExternalPort>${Ports.HTTP}</ExternalPort>
+              <RtspPort>${Ports.RTSP}</RtspPort>
+              <PairStatus>${if (paired || secure) 1 else 0}</PairStatus>
+              <currentgame>0</currentgame>
+              <state>MJOLNIR_SERVER_AVAILABLE</state>
+              <MaxLumaPixelsH264>1869449984</MaxLumaPixelsH264>
+              <MaxLumaPixelsHEVC>${if (activeVideoMime() == "video/hevc") "1869449984" else "0"}</MaxLumaPixelsHEVC>
+              <ServerCodecModeSupport>$codecSupport</ServerCodecModeSupport>
+              <gputype>Android Hardware Encoder</gputype>
+              <LocalIP>0.0.0.0</LocalIP>
+              <mac>00:00:00:00:00:00</mac>
+              <codec>${config.codecPreference.name}</codec>
+              <height>${config.height}</height>
+              <width>${config.width}</width>
+              <fps>${config.fps}</fps>
+            </root>
+        """.trimIndent()
+    }
+
+    private fun appList(): String =
+        """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root status_code="200">
+              <App>
+                <ID>1</ID>
+                <AppTitle>Android Screen</AppTitle>
+                <IsHdrSupported>0</IsHdrSupported>
+              </App>
+            </root>
+        """.trimIndent()
+
+    private fun pair(query: Map<String, String>): String {
+        val uniqueId = query["uniqueid"] ?: "0123456789ABCDEF"
+        return pairingProtocol.handle(uniqueId, query)
+    }
+
+    private fun launch(localAddress: String, resume: Boolean = false): String {
+        val accepted = onLaunchRequested()
+        return if (accepted) {
+            val tag = if (resume) "resume" else "gamesession"
+            """
+                <?xml version="1.0" encoding="utf-8"?>
+                <root status_code="200">
+                  <sessionUrl0>rtsp://$localAddress:${Ports.RTSP}</sessionUrl0>
+                  <$tag>1</$tag>
+                </root>
+            """.trimIndent()
+        } else {
+            errorXml(409, "Launch rejected")
+        }
+    }
+
+    private fun okXml(name: String): String =
+        """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root status_code="200"><$name>1</$name></root>
+        """.trimIndent()
+
+    private fun errorXml(status: Int, message: String): String =
+        """
+            <?xml version="1.0" encoding="utf-8"?>
+            <root status_code="$status" status_message="$message"><error>$message</error></root>
+        """.trimIndent()
+
+    private fun parseQuery(rawQuery: String?): Map<String, String> {
+        if (rawQuery.isNullOrBlank()) return emptyMap()
+        return rawQuery.split("&").mapNotNull { part ->
+            val pieces = part.split("=", limit = 2)
+            val key = pieces.getOrNull(0)?.decodeUrl() ?: return@mapNotNull null
+            val value = pieces.getOrNull(1)?.decodeUrl().orEmpty()
+            key to value
+        }.toMap()
+    }
+
+    private fun String.decodeUrl(): String =
+        URLDecoder.decode(this, StandardCharsets.UTF_8.name())
+}

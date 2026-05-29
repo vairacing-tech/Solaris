@@ -1,0 +1,199 @@
+package com.apsu.gamestream.encoder
+
+import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.HandlerThread
+import android.view.Surface
+import com.apsu.gamestream.model.StreamConfig
+
+class EncoderSession(
+    private val config: StreamConfig,
+    private val encoderInfo: HardwareEncoderInfo,
+    private val onFrame: (EncodedFrame) -> Unit,
+    private val onError: (Throwable) -> Unit,
+) {
+    private var codec: MediaCodec? = null
+    private var inputSurface: Surface? = null
+    private var callbackThread: HandlerThread? = null
+    @Volatile private var codecConfig: ByteArray = ByteArray(0)
+
+    fun start(): Surface {
+        check(codec == null) { "EncoderSession already started" }
+
+        val callbackThread = HandlerThread("apsu-encoder-callback").also { it.start() }
+        this.callbackThread = callbackThread
+
+        val mediaCodec = MediaCodec.createByCodecName(encoderInfo.codecName)
+        mediaCodec.setCallback(callback(), Handler(callbackThread.looper))
+
+        val format = MediaFormat.createVideoFormat(encoderInfo.mime, config.width, config.height).apply {
+            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+            setInteger(MediaFormat.KEY_BIT_RATE, config.bitrate)
+            setInteger(MediaFormat.KEY_FRAME_RATE, config.fps)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, config.iFrameIntervalSeconds)
+            setInteger(MediaFormat.KEY_PRIORITY, 0)
+            setInteger(MediaFormat.KEY_OPERATING_RATE, config.fps)
+            if (encoderInfo.cbrSupported) {
+                setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+            }
+            if (config.lowLatency && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            }
+        }
+
+        mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        val surface = mediaCodec.createInputSurface()
+        mediaCodec.start()
+
+        codec = mediaCodec
+        inputSurface = surface
+        requestSyncFrame()
+        return surface
+    }
+
+    fun requestSyncFrame() {
+        val codec = codec ?: return
+        runCatching {
+            codec.setParameters(Bundle().apply {
+                putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+            })
+        }
+    }
+
+    fun stop() {
+        val mediaCodec = codec
+        codec = null
+        inputSurface?.release()
+        inputSurface = null
+        runCatching { mediaCodec?.stop() }
+        runCatching { mediaCodec?.release() }
+        callbackThread?.quitSafely()
+        callbackThread = null
+    }
+
+    private fun callback(): MediaCodec.Callback = object : MediaCodec.Callback() {
+        override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
+
+        override fun onOutputBufferAvailable(
+            codec: MediaCodec,
+            index: Int,
+            info: MediaCodec.BufferInfo,
+        ) {
+            try {
+                val buffer = codec.getOutputBuffer(index)
+                if (buffer != null && info.size > 0) {
+                    buffer.position(info.offset)
+                    buffer.limit(info.offset + info.size)
+                    val bytes = ByteArray(info.size)
+                    buffer.get(bytes)
+                    if ((info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                        codecConfig = normalizeAnnexB(bytes)
+                        return
+                    }
+                    val frameBytes = prepareFrameBytes(bytes, info.flags)
+                    onFrame(
+                        EncodedFrame(
+                            bytes = frameBytes,
+                            presentationTimeUs = info.presentationTimeUs,
+                            flags = info.flags,
+                        ),
+                    )
+                }
+            } catch (t: Throwable) {
+                onError(t)
+            } finally {
+                runCatching { codec.releaseOutputBuffer(index, false) }
+            }
+        }
+
+        override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
+            onError(e)
+        }
+
+        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            codecConfig = codecConfigFromFormat(format)
+        }
+    }
+
+    private fun prepareFrameBytes(bytes: ByteArray, flags: Int): ByteArray {
+        val normalized = normalizeAnnexB(bytes)
+        if ((flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) == 0 || codecConfig.isEmpty()) {
+            return normalized
+        }
+        if (normalized.startsWith(codecConfig)) {
+            return normalized
+        }
+        return codecConfig + normalized
+    }
+
+    private fun codecConfigFromFormat(format: MediaFormat): ByteArray {
+        val keys = buildList {
+            add("csd-0")
+            add("csd-1")
+            add("csd-2")
+        }
+        return keys.mapNotNull { key ->
+            if (!format.containsKey(key)) return@mapNotNull null
+            format.getByteBuffer(key)?.let { buffer ->
+                val duplicate = buffer.duplicate()
+                val bytes = ByteArray(duplicate.remaining())
+                duplicate.get(bytes)
+                normalizeAnnexB(bytes)
+            }
+        }.fold(ByteArray(0)) { acc, bytes -> acc + bytes }
+    }
+
+    private fun normalizeAnnexB(bytes: ByteArray): ByteArray {
+        if (bytes.hasAnnexBStartCode()) return bytes
+        return convertLengthPrefixedNalUnits(bytes)
+    }
+
+    private fun convertLengthPrefixedNalUnits(bytes: ByteArray): ByteArray {
+        val out = ArrayList<Byte>(bytes.size + 16)
+        var offset = 0
+        while (offset + 4 <= bytes.size) {
+            val length = ((bytes[offset].toInt() and 0xFF) shl 24) or
+                ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
+                ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
+                (bytes[offset + 3].toInt() and 0xFF)
+            if (length <= 0 || offset + 4 + length > bytes.size) {
+                return bytes
+            }
+            out.add(0)
+            out.add(0)
+            out.add(0)
+            out.add(1)
+            for (i in 0 until length) {
+                out.add(bytes[offset + 4 + i])
+            }
+            offset += 4 + length
+        }
+        return if (offset == bytes.size && out.isNotEmpty()) out.toByteArray() else bytes
+    }
+
+    private fun ByteArray.hasAnnexBStartCode(): Boolean {
+        if (size < 4) return false
+        for (i in 0 until size - 3) {
+            if (this[i] == 0.toByte() && this[i + 1] == 0.toByte()) {
+                if (this[i + 2] == 1.toByte()) return true
+                if (i + 3 < size && this[i + 2] == 0.toByte() && this[i + 3] == 1.toByte()) return true
+            }
+        }
+        return false
+    }
+
+    private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
+        if (prefix.size > size) return false
+        for (i in prefix.indices) {
+            if (this[i] != prefix[i]) return false
+        }
+        return true
+    }
+}

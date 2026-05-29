@@ -1,0 +1,14 @@
+.gradle/
+.kotlin/
+build/
+app/build/
+app/.cxx/
+local.properties
+*.iml
+.idea/
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+*signing*.txt
