@@ -15,6 +15,7 @@ import java.net.Socket
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLServerSocket
 import kotlin.concurrent.thread
@@ -93,29 +94,32 @@ class NvHttpServer(
         val query = parseQuery(uri.rawQuery)
         val path = uri.path.lowercase()
         val localAddress = socket.localAddress.hostAddress?.takeUnless { it == "0.0.0.0" } ?: "127.0.0.1"
-        val body = when (path) {
-            "/serverinfo", "/serverinfo.xml" -> serverInfo(localAddress)
-            "/applist", "/applist.xml" -> appList()
-            "/pair", "/pair.xml" -> pair(query)
+        onLog("${if (secure) "NVHTTPS" else "NVHTTP"} ${parts.firstOrNull().orEmpty()} $path")
+        val response = when (path) {
+            "/serverinfo", "/serverinfo.xml" -> xml(serverInfo(localAddress))
+            "/applist", "/applist.xml" -> xml(appList())
+            "/appasset", "/appasset.xml" -> png(DEFAULT_APP_ASSET_PNG)
+            "/pair", "/pair.xml" -> xml(pair(query))
             "/unpair", "/unpair.xml" -> {
                 pairingProtocol.unpair()
-                okXml("unpair")
+                xml(okXml("unpair"))
             }
-            "/launch", "/launch.xml" -> launch(localAddress)
-            "/resume", "/resume.xml" -> launch(localAddress, resume = true)
-            "/cancel", "/cancel.xml" -> okXml("cancel")
-            "/pin", "/pin.xml" -> pin(query)
-            else -> errorXml(404, "Unknown endpoint: $path")
+            "/launch", "/launch.xml" -> xml(launch(localAddress))
+            "/resume", "/resume.xml" -> xml(launch(localAddress, resume = true))
+            "/cancel", "/cancel.xml" -> xml(okXml("cancel"))
+            "/pin", "/pin.xml" -> xml(pin(query))
+            else -> xml(errorXml(404, "Unknown endpoint: $path"), httpStatus = 404)
         }
 
         val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))
-        writer.write("HTTP/1.1 200 OK\r\n")
-        writer.write("Content-Type: text/xml; charset=utf-8\r\n")
-        writer.write("Content-Length: ${body.toByteArray(StandardCharsets.UTF_8).size}\r\n")
+        writer.write("HTTP/1.1 ${response.httpStatus} ${response.reason}\r\n")
+        writer.write("Content-Type: ${response.contentType}\r\n")
+        writer.write("Content-Length: ${response.body.size}\r\n")
         writer.write("Connection: close\r\n")
         writer.write("\r\n")
-        writer.write(body)
         writer.flush()
+        socket.getOutputStream().write(response.body)
+        socket.getOutputStream().flush()
     }
 
     private fun serverInfo(localAddress: String): String {
@@ -153,16 +157,11 @@ class NvHttpServer(
     }
 
     private fun appList(): String =
-        """
-            <?xml version="1.0" encoding="utf-8"?>
-            <root status_code="200">
-              <App>
-                <ID>1</ID>
-                <AppTitle>Android Screen</AppTitle>
-                <IsHdrSupported>0</IsHdrSupported>
-              </App>
-            </root>
-        """.trimIndent()
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<root status_code=\"200\">" +
+            "<App><IsHdrSupported>0</IsHdrSupported><AppTitle>Desktop</AppTitle><ID>1</ID></App>" +
+            "<App><IsHdrSupported>0</IsHdrSupported><AppTitle>Android Screen</AppTitle><ID>2</ID></App>" +
+            "</root>"
 
     private fun pair(query: Map<String, String>): String {
         val uniqueId = query["uniqueid"] ?: "0123456789ABCDEF"
@@ -217,4 +216,33 @@ class NvHttpServer(
 
     private fun String.decodeUrl(): String =
         URLDecoder.decode(this, StandardCharsets.UTF_8.name())
+
+    private fun xml(body: String, httpStatus: Int = 200): NvHttpResponse =
+        NvHttpResponse(
+            httpStatus = httpStatus,
+            reason = if (httpStatus == 200) "OK" else "NOT FOUND",
+            contentType = "text/xml; charset=utf-8",
+            body = body.toByteArray(StandardCharsets.UTF_8),
+        )
+
+    private fun png(body: ByteArray): NvHttpResponse =
+        NvHttpResponse(
+            httpStatus = 200,
+            reason = "OK",
+            contentType = "image/png",
+            body = body,
+        )
+
+    private data class NvHttpResponse(
+        val httpStatus: Int,
+        val reason: String,
+        val contentType: String,
+        val body: ByteArray,
+    )
+
+    companion object {
+        private val DEFAULT_APP_ASSET_PNG: ByteArray = Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lz9tJwAAAABJRU5ErkJggg==",
+        )
+    }
 }

@@ -55,6 +55,8 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - Control legacy en TCP `47995`
   - Input legacy sink en TCP `35043`
   - anuncio mDNS `_nvstream._tcp` en el puerto `47989`
+  - `/applist` anuncia `Desktop` y `Android Screen` con XML compacto compatible con el parser de Moonlight/Artemis
+  - `/appasset` devuelve un PNG minimo para evitar bloqueos de clientes que pidan portada tras leer la lista
 - Pairing:
   - certificado self-signed via AndroidKeyStore
   - `uniqueid` persistente en preferencias locales para que Artemis/Moonlight no trate cada arranque como un host nuevo
