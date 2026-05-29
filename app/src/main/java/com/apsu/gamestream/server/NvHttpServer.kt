@@ -96,7 +96,7 @@ class NvHttpServer(
         val localAddress = socket.localAddress.hostAddress?.takeUnless { it == "0.0.0.0" } ?: "127.0.0.1"
         onLog("${if (secure) "NVHTTPS" else "NVHTTP"} ${parts.firstOrNull().orEmpty()} $path")
         val response = when (path) {
-            "/serverinfo", "/serverinfo.xml" -> xml(serverInfo(localAddress))
+            "/serverinfo", "/serverinfo.xml" -> xml(serverInfo(localAddress, secure))
             "/applist", "/applist.xml" -> xml(appList())
             "/appasset", "/appasset.xml" -> png(DEFAULT_APP_ASSET_PNG)
             "/pair", "/pair.xml" -> xml(pair(query))
@@ -122,8 +122,9 @@ class NvHttpServer(
         socket.getOutputStream().flush()
     }
 
-    private fun serverInfo(localAddress: String): String {
+    private fun serverInfo(localAddress: String, secure: Boolean): String {
         val paired = pairingStore.list().isNotEmpty()
+        val pairStatus = if (secure && paired) 1 else 0
         val config = currentConfig()
         val codecSupport = when (activeVideoMime()) {
             "video/hevc" -> 0x00000101
@@ -139,7 +140,7 @@ class NvHttpServer(
               <HttpsPort>${Ports.HTTPS}</HttpsPort>
               <ExternalPort>${Ports.HTTP}</ExternalPort>
               <RtspPort>${Ports.RTSP}</RtspPort>
-              <PairStatus>${if (paired) 1 else 0}</PairStatus>
+              <PairStatus>$pairStatus</PairStatus>
               <currentgame>0</currentgame>
               <state>MJOLNIR_SERVER_AVAILABLE</state>
               <MaxLumaPixelsH264>1869449984</MaxLumaPixelsH264>
