@@ -24,6 +24,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
 - Proyecto Android Kotlin + NDK con `compileSdk`/`targetSdk` 36.
 - UI programatica sin AndroidX en `MainActivity`.
 - Foreground service `ProjectionStreamService` con tipo `mediaProjection`.
+- `PARTIAL_WAKE_LOCK` mientras el streaming esta activo para evitar reposo durante sesiones largas.
 - Captura directa: `MediaProjection -> VirtualDisplay -> MediaCodec input Surface`.
 - Encoder hardware obligatorio:
   - H.264: `video/avc`
@@ -98,7 +99,7 @@ Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiend
 
 - No hay validacion runtime todavia: no hay dispositivo ADB conectado en este entorno.
 - El control/input remoto se acepta para que Moonlight no falle, pero se ignora; no inyecta tactil, mando, teclado ni raton en Android.
-- Audio de red no esta implementado. La app puede capturar PCM local con `AudioPlaybackCaptureConfiguration`, pero aun no codifica Opus ni envia RTP audio.
+- Audio de red no esta implementado. La app puede capturar PCM local con `AudioPlaybackCaptureConfiguration`, pero aun no codifica Opus ni envia RTP audio. Si Android niega o bloquea la captura de audio, el video continua.
 - No hay FEC ni retransmision avanzada en video.
 - No hay RTSP cifrado ni control stream ENet moderno.
 - La compatibilidad HEVC con Moonlight debe probarse en dispositivo real; el encoder hardware y el SDP estan implementados, pero el primer objetivo de interoperabilidad es H.264.

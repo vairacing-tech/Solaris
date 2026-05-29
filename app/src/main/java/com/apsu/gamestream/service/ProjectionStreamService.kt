@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import com.apsu.gamestream.R
 import com.apsu.gamestream.audio.AudioCaptureSession
@@ -31,6 +32,7 @@ class ProjectionStreamService : Service() {
     private var encoderSession: EncoderSession? = null
     private var audioCaptureSession: AudioCaptureSession? = null
     private var gameStreamServer: GameStreamServer? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -75,6 +77,7 @@ class ProjectionStreamService : Service() {
         val config = StreamConfigExtras.from(intent)
         updateStatus(ServerState.WAITING_FOR_PROJECTION, "Starting ${config.resolutionLabel} ${config.fps}fps")
         startInForeground("Starting ${config.resolutionLabel} ${config.fps}fps")
+        acquireWakeLock()
 
         try {
             val encoderInfo = EncoderSelector.select(
@@ -127,11 +130,18 @@ class ProjectionStreamService : Service() {
             )
 
             if (config.audioEnabled) {
-                audioCaptureSession = AudioCaptureSession(
+                val audioSession = AudioCaptureSession(
                     projection = projection,
                     onPcm = { pcm, _ -> if (pcm.isNotEmpty()) Unit },
                     onError = { throwable -> log("Audio capture disabled: ${throwable.message}") },
-                ).also { it.start() }
+                )
+                audioCaptureSession = audioSession
+                runCatching { audioSession.start() }
+                    .onFailure { throwable ->
+                        log("Audio capture disabled: ${throwable.message}")
+                        audioSession.stop()
+                        audioCaptureSession = null
+                    }
             }
 
             updateStatus(
@@ -155,6 +165,7 @@ class ProjectionStreamService : Service() {
         encoderSession = null
         gameStreamServer?.stop()
         gameStreamServer = null
+        releaseWakeLock()
         val activeProjection = projection
         projection = null
         runCatching { activeProjection?.unregisterCallback(projectionCallback) }
@@ -202,6 +213,27 @@ class ProjectionStreamService : Service() {
                 NotificationManager.IMPORTANCE_LOW,
             ),
         )
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val powerManager = getSystemService(PowerManager::class.java)
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "$packageName:streaming",
+        ).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        }
+        wakeLock = null
     }
 
     private fun projectionData(intent: Intent): Intent? =
