@@ -23,10 +23,12 @@ class VideoRtpTransport(
     private var receiveThread: Thread? = null
     private var rtpSequence = 1
     private var frameIndex = 1
+    private var sentFrames = 0L
     @Volatile private var packetSize = DEFAULT_GAMESTREAM_PACKET_SIZE
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
+        sentFrames = 0L
         socket = DatagramSocket(port, InetAddress.getByName("0.0.0.0")).also {
             it.soTimeout = 1_000
             it.sendBufferSize = 1024 * 1024
@@ -56,6 +58,7 @@ class VideoRtpTransport(
         runCatching { socket?.close() }
         socket = null
         peer = null
+        sentFrames = 0L
         receiveThread = null
     }
 
@@ -103,6 +106,10 @@ class VideoRtpTransport(
             )
             activeSocket.send(DatagramPacket(packet, packet.size, activePeer.address, activePeer.port))
             offset += chunkLength
+        }
+        sentFrames++
+        if (sentFrames == 1L || sentFrames % SENT_FRAME_LOG_INTERVAL == 0L) {
+            onLog("Sent video frame $sentFrames as $dataPackets UDP packets to ${activePeer.address.hostAddress}:${activePeer.port}")
         }
     }
 
@@ -162,6 +169,7 @@ class VideoRtpTransport(
         private const val MIN_GAMESTREAM_PACKET_SIZE = 512
         private const val MAX_GAMESTREAM_PACKET_SIZE = 1392
         private const val FRAME_HEADER_SIZE = 8
+        private const val SENT_FRAME_LOG_INTERVAL = 300L
 
         private const val FLAG_CONTAINS_PIC_DATA = 0x01
         private const val FLAG_EOF = 0x02

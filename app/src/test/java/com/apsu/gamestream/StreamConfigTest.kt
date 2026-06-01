@@ -16,6 +16,7 @@ class StreamConfigTest {
         assertEquals(1080, config.height)
         assertEquals(60, config.fps)
         assertEquals(16_000_000, config.bitrate)
+        assertEquals(false, config.audioEnabled)
     }
 
     @Test

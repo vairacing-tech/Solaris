@@ -17,6 +17,7 @@ class LegacyControlTcpServer(
 ) {
     private val running = AtomicBoolean(false)
     private var serverSocket: ServerSocket? = null
+    @Volatile private var lastIdrRequestEpochMillis = 0L
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -58,7 +59,7 @@ class LegacyControlTcpServer(
                 if (!readFully(input, payload)) return
             }
             if (type == REQUEST_IDR_GEN4 || type == REQUEST_IDR_GEN3) {
-                onIdrRequested()
+                requestIdrIfDue()
             }
             output.write(reply(type))
             output.flush()
@@ -83,8 +84,16 @@ class LegacyControlTcpServer(
     private fun ByteArray.readU16Le(offset: Int): Int =
         (this[offset].toInt() and 0xFF) or ((this[offset + 1].toInt() and 0xFF) shl 8)
 
+    private fun requestIdrIfDue() {
+        val now = System.currentTimeMillis()
+        if (now - lastIdrRequestEpochMillis < IDR_REQUEST_MIN_INTERVAL_MS) return
+        lastIdrRequestEpochMillis = now
+        onIdrRequested.invoke()
+    }
+
     companion object {
         private const val REQUEST_IDR_GEN3 = 0x1407
         private const val REQUEST_IDR_GEN4 = 0x0606
+        private const val IDR_REQUEST_MIN_INTERVAL_MS = 250L
     }
 }

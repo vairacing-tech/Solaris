@@ -38,8 +38,9 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - resolucion: 720p, 1080p, 1440p
   - FPS: 30, 45, 60, 90, 120
   - bitrate manual en Mbps
-  - audio capture on/off
+  - audio capture on/off, desactivado por defecto hasta implementar RTP audio real
   - persistencia local de codec, resolucion, FPS, bitrate y audio
+  - migracion de ajustes antiguos HEVC/bitrate alto hacia H.264 1080p60 16 Mbps como perfil de compatibilidad inicial
   - logs recientes visibles dentro de la app
   - mantenimiento: limpiar pairings y regenerar identidad/certificado del host
   - estado de cliente activo detectado por actividad NVHTTP/RTSP/RTP/control
@@ -91,11 +92,12 @@ La razon es practica. Con `appversion 7.1.431.0`, Moonlight usa control stream E
 
 - pairing SHA-1
 - RTSP por TCP
-- control por TCP `47995`
-- input por TCP `35043`
-- video sin frame header moderno
+  - control por TCP `47995`
+  - input por TCP `35043`
+  - video sin frame header moderno
 
 Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiendo y se anuncia en SDP con el marcador que Moonlight usa para detectar H.265, pero la ruta que primero debe validarse manualmente es H.264 1080p60.
+Si un cliente muestra `conexion lenta al PC`, la primera prueba debe volver a H.264 1080p60 16 Mbps con audio desactivado; los logs `Sent video frame...` confirman que el host esta enviando UDP al peer.
 
 ## Flujo de uso
 

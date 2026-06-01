@@ -71,6 +71,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         requestRuntimePermissions()
         styleSystemBars(window)
+        migrateStreamSettingsIfNeeded()
         setContentView(buildContent())
         refreshEncoderPreview()
         handler.post(statusPoll)
@@ -178,7 +179,7 @@ class MainActivity : Activity() {
             text = "Audio capture"
             textSize = 15f
             setTextColor(COLOR_TEXT)
-            isChecked = streamPrefs.getBoolean(PREF_AUDIO_ENABLED, true)
+            isChecked = streamPrefs.getBoolean(PREF_AUDIO_ENABLED, false)
             setPadding(0, dp(10), 0, dp(2))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 thumbTintList = ColorStateList.valueOf(COLOR_ACCENT)
@@ -451,11 +452,28 @@ class MainActivity : Activity() {
             .putInt(PREF_FPS_INDEX, fpsSpinner.selectedItemPosition)
             .putInt(PREF_BITRATE_MBPS, bitrateMbps)
             .putBoolean(PREF_AUDIO_ENABLED, audioSwitch.isChecked)
+            .putInt(PREF_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
             .apply()
     }
 
     private fun savedIndex(key: String, defaultValue: Int, itemCount: Int): Int =
         streamPrefs.getInt(key, defaultValue).coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+
+    private fun migrateStreamSettingsIfNeeded() {
+        val version = streamPrefs.getInt(PREF_SETTINGS_VERSION, 0)
+        if (version >= CURRENT_SETTINGS_VERSION) return
+
+        val savedCodec = streamPrefs.getInt(PREF_CODEC_INDEX, CodecPreference.H264.ordinal)
+        val editor = streamPrefs.edit()
+            .putInt(PREF_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
+            .putBoolean(PREF_AUDIO_ENABLED, false)
+        if (savedCodec == CodecPreference.HEVC.ordinal) {
+            editor
+                .putInt(PREF_CODEC_INDEX, CodecPreference.H264.ordinal)
+                .putInt(PREF_BITRATE_MBPS, streamPrefs.getInt(PREF_BITRATE_MBPS, 16).coerceAtMost(16))
+        }
+        editor.apply()
+    }
 
     private fun refreshEncoderPreview() {
         if (!::encoderText.isInitialized || !::codecSpinner.isInitialized) return
@@ -569,6 +587,8 @@ class MainActivity : Activity() {
         private const val PREF_FPS_INDEX = "fps_index"
         private const val PREF_BITRATE_MBPS = "bitrate_mbps"
         private const val PREF_AUDIO_ENABLED = "audio_enabled"
+        private const val PREF_SETTINGS_VERSION = "settings_version"
+        private const val CURRENT_SETTINGS_VERSION = 2
         private val FPS_OPTIONS = listOf(30, 45, 60, 90, 120)
 
         private const val COLOR_BLACK = 0xFF000000.toInt()
