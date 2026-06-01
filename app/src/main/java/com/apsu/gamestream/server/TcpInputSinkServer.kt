@@ -38,6 +38,7 @@ class TcpInputSinkServer(
     }
 
     private fun drain(socket: Socket) {
+        ClientConnectionState.mark("Legacy input", socket.inetAddress.hostAddress)
         socket.tcpNoDelay = true
         socket.soTimeout = 2_000
         val buffer = ByteArray(4096)

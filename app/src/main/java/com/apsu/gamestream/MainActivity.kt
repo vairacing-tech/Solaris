@@ -2,6 +2,7 @@ package com.apsu.gamestream
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
@@ -32,8 +33,9 @@ import com.apsu.gamestream.model.CodecPreference
 import com.apsu.gamestream.model.ResolutionPreset
 import com.apsu.gamestream.model.ServerState
 import com.apsu.gamestream.model.StreamConfig
-import com.apsu.gamestream.nativebridge.NativeBridge
 import com.apsu.gamestream.pairing.PairingPin
+import com.apsu.gamestream.pairing.PairingStore
+import com.apsu.gamestream.server.ClientConnectionState
 import com.apsu.gamestream.server.GameStreamProtocol
 import com.apsu.gamestream.server.Ports
 import com.apsu.gamestream.service.ProjectionStreamService
@@ -41,9 +43,13 @@ import java.net.NetworkInterface
 
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
+    private val streamPrefs by lazy {
+        getSharedPreferences(PREF_STREAM_SETTINGS, Context.MODE_PRIVATE)
+    }
     private lateinit var statusText: TextView
     private lateinit var connectionText: TextView
     private lateinit var encoderText: TextView
+    private lateinit var logsText: TextView
     private lateinit var codecSpinner: Spinner
     private lateinit var resolutionSpinner: Spinner
     private lateinit var fpsSpinner: Spinner
@@ -55,6 +61,7 @@ class MainActivity : Activity() {
         override fun run() {
             updateStatusUi()
             connectionText.text = connectionSummary()
+            updateLogsUi()
             syncPairingPinInput()
             handler.postDelayed(this, 1_000)
         }
@@ -150,27 +157,34 @@ class MainActivity : Activity() {
         root.addView(section("PAIR", pairingSection))
 
         codecSpinner = spinner(CodecPreference.entries.map { it.name })
-        codecSpinner.setSelection(CodecPreference.H264.ordinal)
+        codecSpinner.setSelection(savedIndex(PREF_CODEC_INDEX, CodecPreference.H264.ordinal, CodecPreference.entries.size))
         resolutionSpinner = spinner(ResolutionPreset.DEFAULTS.map { "${it.label} (${it.width}x${it.height})" })
-        resolutionSpinner.setSelection(1)
-        fpsSpinner = spinner(listOf("30", "45", "60", "90", "120"))
-        fpsSpinner.setSelection(2)
+        resolutionSpinner.setSelection(savedIndex(PREF_RESOLUTION_INDEX, 1, ResolutionPreset.DEFAULTS.size))
+        fpsSpinner = spinner(FPS_OPTIONS.map { it.toString() })
+        fpsSpinner.setSelection(savedIndex(PREF_FPS_INDEX, 2, FPS_OPTIONS.size))
         bitrateInput = EditText(this).apply {
-            setText("16")
+            setText(streamPrefs.getInt(PREF_BITRATE_MBPS, 16).coerceAtLeast(1).toString())
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             hint = "Mbps"
             styleInput()
+            setOnFocusChangeListener { _, hasFocus ->
+                if (!hasFocus) {
+                    saveSelectedSettings()
+                    refreshEncoderPreview()
+                }
+            }
         }
         audioSwitch = Switch(this).apply {
             text = "Audio capture"
             textSize = 15f
             setTextColor(COLOR_TEXT)
-            isChecked = true
+            isChecked = streamPrefs.getBoolean(PREF_AUDIO_ENABLED, true)
             setPadding(0, dp(10), 0, dp(2))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 thumbTintList = ColorStateList.valueOf(COLOR_ACCENT)
                 trackTintList = ColorStateList.valueOf(COLOR_ACCENT_DIM)
             }
+            setOnCheckedChangeListener { _, _ -> saveSelectedSettings() }
         }
         val streamSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -203,8 +217,31 @@ class MainActivity : Activity() {
             setOnClickListener { startService(ProjectionStreamService.stopIntent(this@MainActivity)) }
         })
 
+        val maintenanceSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(actionButton("Clear pairings", ButtonTone.SECONDARY).apply {
+                setOnClickListener {
+                    startService(ProjectionStreamService.clearPairingsIntent(this@MainActivity))
+                    Toast.makeText(this@MainActivity, "Paired clients cleared", Toast.LENGTH_SHORT).show()
+                }
+            })
+            addView(actionButton("Reset host identity and certificate", ButtonTone.DANGER).apply {
+                setOnClickListener { confirmResetHostIdentity() }
+            })
+        }
+        root.addView(section("MAINTENANCE", maintenanceSection))
+
+        logsText = TextView(this).apply {
+            textSize = 12f
+            typeface = Typeface.MONOSPACE
+            setTextColor(COLOR_MUTED)
+            setLineSpacing(0f, 1.12f)
+        }
+        root.addView(section("LOGS", logsText))
+
         val listener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                saveSelectedSettings()
                 refreshEncoderPreview()
             }
 
@@ -318,8 +355,15 @@ class MainActivity : Activity() {
         statusText.background = rounded(tone.background, tone.stroke)
     }
 
+    private fun updateLogsUi() {
+        if (!::logsText.isInitialized) return
+        val lines = ProjectionStreamService.recentLogs().takeLast(12)
+        logsText.text = if (lines.isEmpty()) "No recent events" else lines.joinToString("\n")
+    }
+
     private fun requestProjectionAndStart() {
         val config = selectedConfig()
+        saveSelectedSettings()
         val encoder = runCatching {
             EncoderSelector.select(
                 config.codecPreference,
@@ -355,12 +399,24 @@ class MainActivity : Activity() {
         connectionText.text = connectionSummary()
     }
 
+    private fun confirmResetHostIdentity() {
+        AlertDialog.Builder(this)
+            .setTitle("Reset host identity?")
+            .setMessage("This clears pairings and creates a new host ID and TLS certificate. Artemis/Moonlight will need to pair again.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Reset") { _, _ ->
+                startService(ProjectionStreamService.resetHostIdentityIntent(this))
+                Toast.makeText(this, "Host identity reset", Toast.LENGTH_LONG).show()
+            }
+            .show()
+    }
+
     private fun syncPairingPinInput() {
         if (!::pairingPinInput.isInitialized || pairingPinInput.hasFocus()) return
         val currentText = pairingPinInput.text.toString()
         val pin = PairingPin.normalize(ProjectionStreamService.currentPin)
         if (pin == null) {
-            if (currentText == "----") {
+            if (currentText.isNotEmpty()) {
                 pairingPinInput.setText("")
             }
             return
@@ -384,8 +440,26 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun saveSelectedSettings() {
+        if (!::codecSpinner.isInitialized || !::resolutionSpinner.isInitialized || !::fpsSpinner.isInitialized) {
+            return
+        }
+        val bitrateMbps = bitrateInput.text.toString().toIntOrNull()?.coerceAtLeast(1) ?: 16
+        streamPrefs.edit()
+            .putInt(PREF_CODEC_INDEX, codecSpinner.selectedItemPosition)
+            .putInt(PREF_RESOLUTION_INDEX, resolutionSpinner.selectedItemPosition)
+            .putInt(PREF_FPS_INDEX, fpsSpinner.selectedItemPosition)
+            .putInt(PREF_BITRATE_MBPS, bitrateMbps)
+            .putBoolean(PREF_AUDIO_ENABLED, audioSwitch.isChecked)
+            .apply()
+    }
+
+    private fun savedIndex(key: String, defaultValue: Int, itemCount: Int): Int =
+        streamPrefs.getInt(key, defaultValue).coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+
     private fun refreshEncoderPreview() {
         if (!::encoderText.isInitialized || !::codecSpinner.isInitialized) return
+        saveSelectedSettings()
         val config = selectedConfig()
         val result = runCatching {
             EncoderSelector.select(
@@ -409,11 +483,22 @@ class MainActivity : Activity() {
     private fun connectionSummary(): String {
         val ips = localIpv4Addresses().ifEmpty { listOf("IP unavailable") }
         val activePin = PairingPin.normalize(ProjectionStreamService.currentPin) ?: "not set"
+        val pairedCount = runCatching { PairingStore(this).list().size }.getOrDefault(0)
         return "Pairing PIN: $activePin\n" +
+            "Paired clients: $pairedCount\n" +
+            "Client: ${clientSummary()}\n" +
             "Protocol ${GameStreamProtocol.APP_VERSION} legacy TCP control\n" +
             "HTTP ${Ports.HTTP}  HTTPS ${Ports.HTTPS}  RTSP ${Ports.RTSP}  Video UDP ${Ports.VIDEO}\n" +
             "Control ${Ports.LEGACY_CONTROL}  Input ${Ports.LEGACY_INPUT}  Audio UDP ${Ports.AUDIO}\n" +
             "Host IP: ${ips.joinToString()}"
+    }
+
+    private fun clientSummary(): String {
+        val snapshot = ClientConnectionState.snapshot()
+        if (!snapshot.isActive()) return "not connected"
+        val ageSeconds = ((System.currentTimeMillis() - snapshot.lastActivityEpochMillis) / 1000L).coerceAtLeast(0)
+        val game = if (snapshot.currentGameId > 0) ", app ${snapshot.currentGameId}" else ""
+        return "${snapshot.address} via ${snapshot.channel}${game}, ${ageSeconds}s ago"
     }
 
     private fun localIpv4Addresses(): List<String> =
@@ -478,6 +563,13 @@ class MainActivity : Activity() {
     companion object {
         private const val REQUEST_MEDIA_PROJECTION = 1001
         private const val REQUEST_RUNTIME_PERMISSIONS = 1002
+        private const val PREF_STREAM_SETTINGS = "stream-settings"
+        private const val PREF_CODEC_INDEX = "codec_index"
+        private const val PREF_RESOLUTION_INDEX = "resolution_index"
+        private const val PREF_FPS_INDEX = "fps_index"
+        private const val PREF_BITRATE_MBPS = "bitrate_mbps"
+        private const val PREF_AUDIO_ENABLED = "audio_enabled"
+        private val FPS_OPTIONS = listOf(30, 45, 60, 90, 120)
 
         private const val COLOR_BLACK = 0xFF000000.toInt()
         private const val COLOR_PANEL = 0xFF070B10.toInt()

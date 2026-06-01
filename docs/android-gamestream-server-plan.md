@@ -39,6 +39,10 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - FPS: 30, 45, 60, 90, 120
   - bitrate manual en Mbps
   - audio capture on/off
+  - persistencia local de codec, resolucion, FPS, bitrate y audio
+  - logs recientes visibles dentro de la app
+  - mantenimiento: limpiar pairings y regenerar identidad/certificado del host
+  - estado de cliente activo detectado por actividad NVHTTP/RTSP/RTP/control
 - Baja latencia:
   - `COLOR_FormatSurface`
   - CBR si el encoder lo soporta
@@ -57,6 +61,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - anuncio mDNS `_nvstream._tcp` en el puerto `47989`
   - `/applist` anuncia `Desktop` y `Android Screen` con XML compacto compatible con el parser de Moonlight/Artemis
   - `/appasset` devuelve un PNG minimo para evitar bloqueos de clientes que pidan portada tras leer la lista
+  - `/launch`, `/resume` y `/cancel` actualizan `currentgame` para que el cliente vea estado basico de sesion
 - Pairing:
   - certificado self-signed via AndroidKeyStore
   - `uniqueid` persistente en preferencias locales para que Artemis/Moonlight no trate cada arranque como un host nuevo
@@ -122,7 +127,6 @@ Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiend
 - Control stream moderno: implementar ENet/AES-GCM para perfiles GameStream recientes en vez de depender del perfil legacy TCP.
 - FEC/retransmision y control de congestion para video RTP.
 - Perfil HEVC validado extremo a extremo, incluido fallback claro a H.264 si el cliente o encoder falla.
-- Persistencia de ajustes, logs visibles, reset de pairing/certificado desde UI y estado de cliente conectado.
 - Pruebas instrumentadas reales para TLS/NVHTTP/RTSP y creacion de encoder con `COLOR_FormatSurface`.
 - Pulido visual: UI OLED oscura inspirada en Moonlight, ya iniciada en `MainActivity`, con componentes propios sin AndroidX.
 

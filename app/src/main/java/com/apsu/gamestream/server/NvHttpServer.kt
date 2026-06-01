@@ -17,6 +17,7 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLServerSocket
 import kotlin.concurrent.thread
 
@@ -34,6 +35,7 @@ class NvHttpServer(
     private val onLog: (String) -> Unit,
 ) {
     private val running = AtomicBoolean(false)
+    private val currentGameId = AtomicInteger(0)
     private var httpSocket: ServerSocket? = null
     private var httpsSocket: ServerSocket? = null
     private var httpThread: Thread? = null
@@ -94,6 +96,7 @@ class NvHttpServer(
         val query = parseQuery(uri.rawQuery)
         val path = uri.path.lowercase()
         val localAddress = socket.localAddress.hostAddress?.takeUnless { it == "0.0.0.0" } ?: "127.0.0.1"
+        ClientConnectionState.mark(if (secure) "NVHTTPS" else "NVHTTP", socket.inetAddress.hostAddress)
         onLog("${if (secure) "NVHTTPS" else "NVHTTP"} ${parts.firstOrNull().orEmpty()} $path")
         val response = when (path) {
             "/serverinfo", "/serverinfo.xml" -> xml(serverInfo(localAddress, secure))
@@ -102,11 +105,13 @@ class NvHttpServer(
             "/pair", "/pair.xml" -> xml(pair(query))
             "/unpair", "/unpair.xml" -> {
                 pairingProtocol.unpair()
+                currentGameId.set(0)
+                ClientConnectionState.setCurrentGame(0)
                 xml(okXml("unpair"))
             }
-            "/launch", "/launch.xml" -> xml(launch(localAddress))
-            "/resume", "/resume.xml" -> xml(launch(localAddress, resume = true))
-            "/cancel", "/cancel.xml" -> xml(okXml("cancel"))
+            "/launch", "/launch.xml" -> xml(launch(localAddress, query))
+            "/resume", "/resume.xml" -> xml(launch(localAddress, query, resume = true))
+            "/cancel", "/cancel.xml" -> xml(cancel())
             "/pin", "/pin.xml" -> xml(pin(query))
             else -> xml(errorXml(404, "Unknown endpoint: $path"), httpStatus = 404)
         }
@@ -141,7 +146,7 @@ class NvHttpServer(
               <ExternalPort>${Ports.HTTP}</ExternalPort>
               <RtspPort>${Ports.RTSP}</RtspPort>
               <PairStatus>$pairStatus</PairStatus>
-              <currentgame>0</currentgame>
+              <currentgame>${currentGameId.get()}</currentgame>
               <state>MJOLNIR_SERVER_AVAILABLE</state>
               <MaxLumaPixelsH264>1869449984</MaxLumaPixelsH264>
               <MaxLumaPixelsHEVC>${if (activeVideoMime() == "video/hevc") "1869449984" else "0"}</MaxLumaPixelsHEVC>
@@ -177,9 +182,13 @@ class NvHttpServer(
         return okXml("pin")
     }
 
-    private fun launch(localAddress: String, resume: Boolean = false): String {
+    private fun launch(localAddress: String, query: Map<String, String>, resume: Boolean = false): String {
         val accepted = onLaunchRequested()
         return if (accepted) {
+            val appId = query.firstInt("appid", "appId", "id").coerceAtLeast(1)
+            currentGameId.set(appId)
+            ClientConnectionState.setCurrentGame(appId)
+            onLog("${if (resume) "Resume" else "Launch"} accepted for app $appId")
             val tag = if (resume) "resume" else "gamesession"
             """
                 <?xml version="1.0" encoding="utf-8"?>
@@ -191,6 +200,13 @@ class NvHttpServer(
         } else {
             errorXml(409, "Launch rejected")
         }
+    }
+
+    private fun cancel(): String {
+        currentGameId.set(0)
+        ClientConnectionState.setCurrentGame(0)
+        onLog("Game session cancelled")
+        return okXml("cancel")
     }
 
     private fun okXml(name: String): String =
@@ -217,6 +233,13 @@ class NvHttpServer(
 
     private fun String.decodeUrl(): String =
         URLDecoder.decode(this, StandardCharsets.UTF_8.name())
+
+    private fun Map<String, String>.firstInt(vararg names: String): Int {
+        names.forEach { name ->
+            this[name]?.toIntOrNull()?.let { return it }
+        }
+        return 1
+    }
 
     private fun xml(body: String, httpStatus: Int = 200): NvHttpResponse =
         NvHttpResponse(

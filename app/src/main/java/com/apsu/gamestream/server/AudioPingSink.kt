@@ -29,6 +29,7 @@ class AudioPingSink(
                     packet
                 }.getOrNull() ?: continue
                 val nextPeer = InetSocketAddress(received.address, received.port)
+                ClientConnectionState.mark("Audio ping", received.address.hostAddress)
                 if (peer != nextPeer) {
                     peer = nextPeer
                     onLog("Audio ping peer ${nextPeer.address.hostAddress}:${nextPeer.port}")

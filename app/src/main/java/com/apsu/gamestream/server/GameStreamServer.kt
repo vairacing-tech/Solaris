@@ -33,6 +33,7 @@ class GameStreamServer(
 
     fun start(config: StreamConfig, activeMime: String) {
         if (nvHttpServer != null || rtspServer != null) return
+        ClientConnectionState.clear()
         frameCount.set(0)
         val identity = ServerIdentity.load(appContext)
         val pairingProtocol = PairingProtocol(
@@ -124,6 +125,7 @@ class GameStreamServer(
     }
 
     fun stop() {
+        ClientConnectionState.clear()
         nvHttpServer?.stop()
         nvHttpServer = null
         mdnsAdvertiser?.stop()

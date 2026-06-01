@@ -43,6 +43,7 @@ class LegacyControlTcpServer(
     }
 
     private fun handle(socket: Socket) {
+        ClientConnectionState.mark("Legacy control", socket.inetAddress.hostAddress)
         socket.tcpNoDelay = true
         socket.soTimeout = 2_000
         val input = DataInputStream(socket.getInputStream())

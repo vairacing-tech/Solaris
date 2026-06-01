@@ -19,12 +19,18 @@ import android.os.PowerManager
 import android.util.Log
 import com.apsu.gamestream.R
 import com.apsu.gamestream.audio.AudioCaptureSession
+import com.apsu.gamestream.crypto.ServerIdentity
 import com.apsu.gamestream.encoder.EncoderSelector
 import com.apsu.gamestream.encoder.EncoderSession
 import com.apsu.gamestream.model.ServerState
 import com.apsu.gamestream.model.StreamConfig
+import com.apsu.gamestream.pairing.PairingStore
 import com.apsu.gamestream.pairing.PairingPin
 import com.apsu.gamestream.server.GameStreamServer
+import com.apsu.gamestream.server.HostIdentity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class ProjectionStreamService : Service() {
     private var projection: MediaProjection? = null
@@ -51,6 +57,8 @@ class ProjectionStreamService : Service() {
         when (intent?.action) {
             ACTION_START -> startFromIntent(intent)
             ACTION_SET_PAIRING_PIN -> updatePairingPin(intent.getStringExtra(EXTRA_PAIRING_PIN), "UI")
+            ACTION_CLEAR_PAIRINGS -> clearPairings()
+            ACTION_RESET_HOST_IDENTITY -> resetHostIdentity()
             ACTION_STOP -> {
                 stopStreaming()
                 stopSelf()
@@ -190,6 +198,21 @@ class ProjectionStreamService : Service() {
         log("Pairing PIN set from $source")
     }
 
+    private fun clearPairings() {
+        PairingStore(applicationContext).clear()
+        currentPin = "----"
+        updateStatus(currentState, "Paired clients cleared")
+    }
+
+    private fun resetHostIdentity() {
+        stopStreaming()
+        runCatching { PairingStore(applicationContext).clear() }
+        runCatching { ServerIdentity.reset(applicationContext) }
+        runCatching { HostIdentity.reset(applicationContext) }
+        currentPin = "----"
+        updateStatus(ServerState.IDLE, "Host identity, TLS certificate and pairings reset")
+    }
+
     private fun startInForeground(text: String) {
         val notification = notification(text)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -262,12 +285,14 @@ class ProjectionStreamService : Service() {
     private fun log(message: String) {
         Log.i(TAG, message)
         lastMessage = message
+        recordLog(message)
     }
 
     private fun updateStatus(state: ServerState, message: String) {
         currentState = state
         lastMessage = message
         Log.i(TAG, "$state: $message")
+        recordLog("$state: $message")
     }
 
     companion object {
@@ -279,7 +304,13 @@ class ProjectionStreamService : Service() {
         private const val EXTRA_PAIRING_PIN = "pairing_pin"
         const val ACTION_START = "com.apsu.gamestream.START"
         const val ACTION_SET_PAIRING_PIN = "com.apsu.gamestream.SET_PAIRING_PIN"
+        const val ACTION_CLEAR_PAIRINGS = "com.apsu.gamestream.CLEAR_PAIRINGS"
+        const val ACTION_RESET_HOST_IDENTITY = "com.apsu.gamestream.RESET_HOST_IDENTITY"
         const val ACTION_STOP = "com.apsu.gamestream.STOP"
+        private const val MAX_RECENT_LOGS = 80
+        private val logLock = Any()
+        private val timestampFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+        private val recentLogLines = mutableListOf<String>()
 
         @Volatile var currentState: ServerState = ServerState.IDLE
             private set
@@ -292,7 +323,21 @@ class ProjectionStreamService : Service() {
             val normalized = PairingPin.normalize(pin) ?: return false
             currentPin = normalized
             lastMessage = "Pairing PIN ready"
+            recordLog("Pairing PIN ready")
             return true
+        }
+
+        fun recentLogs(): List<String> =
+            synchronized(logLock) { recentLogLines.toList() }
+
+        private fun recordLog(message: String) {
+            synchronized(logLock) {
+                val line = "${timestampFormat.format(Date())}  $message"
+                recentLogLines.add(line)
+                while (recentLogLines.size > MAX_RECENT_LOGS) {
+                    recentLogLines.removeAt(0)
+                }
+            }
         }
 
         fun setPinIntent(context: Context, pin: String): Intent =
@@ -310,5 +355,11 @@ class ProjectionStreamService : Service() {
 
         fun stopIntent(context: Context): Intent =
             Intent(context, ProjectionStreamService::class.java).setAction(ACTION_STOP)
+
+        fun clearPairingsIntent(context: Context): Intent =
+            Intent(context, ProjectionStreamService::class.java).setAction(ACTION_CLEAR_PAIRINGS)
+
+        fun resetHostIdentityIntent(context: Context): Intent =
+            Intent(context, ProjectionStreamService::class.java).setAction(ACTION_RESET_HOST_IDENTITY)
     }
 }

@@ -13,5 +13,12 @@ class HostIdentity(context: Context) {
 
     companion object {
         private const val KEY_UNIQUE_ID = "unique_id"
+
+        fun reset(context: Context) {
+            context.applicationContext.getSharedPreferences("host-identity", Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_UNIQUE_ID)
+                .apply()
+        }
     }
 }

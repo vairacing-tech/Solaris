@@ -50,6 +50,7 @@ class RtspServer(
     }
 
     private fun handleOne(socket: Socket) {
+        ClientConnectionState.mark("RTSP", socket.inetAddress.hostAddress)
         val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
         val writer = BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))
         val requestLine = reader.readLine() ?: return

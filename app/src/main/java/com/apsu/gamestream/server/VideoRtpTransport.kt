@@ -41,6 +41,7 @@ class VideoRtpTransport(
                 }.getOrNull() ?: continue
 
                 val nextPeer = InetSocketAddress(received.address, received.port)
+                ClientConnectionState.mark("Video RTP", received.address.hostAddress)
                 if (peer != nextPeer) {
                     peer = nextPeer
                     onLog("Video UDP peer ${nextPeer.address.hostAddress}:${nextPeer.port}")

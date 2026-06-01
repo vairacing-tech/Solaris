@@ -40,6 +40,17 @@ class ServerIdentity private constructor(
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val ALIAS = "apsu-gamestream-server-v2"
 
+        fun reset(context: Context) {
+            val androidKeyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            if (androidKeyStore.containsAlias(ALIAS)) {
+                androidKeyStore.deleteEntry(ALIAS)
+            }
+            context.applicationContext.getSharedPreferences("server-identity", Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .apply()
+        }
+
         fun load(context: Context): ServerIdentity {
             require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 "AndroidKeyStore self-signed certificates require Android 6.0+"
