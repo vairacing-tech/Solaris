@@ -114,6 +114,18 @@ Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiend
 - La compatibilidad HEVC con Moonlight debe probarse en dispositivo real; el encoder hardware y el SDP estan implementados, pero el primer objetivo de interoperabilidad es H.264.
 - La emision empieza al iniciar el servicio y descarta frames hasta recibir el ping UDP de video del cliente.
 
+## Pendiente por implementar
+
+- Completar interoperabilidad estable con Artemis/Moonlight: pairing, lista de apps, launch, RTSP y primer frame sin workarounds manuales.
+- Audio de red real: codificar Opus y enviar RTP audio en vez de solo mantener abierto el puerto/ping.
+- Input remoto: traducir mando, teclado, raton y tactil del cliente a eventos Android cuando sea viable sin root.
+- Control stream moderno: implementar ENet/AES-GCM para perfiles GameStream recientes en vez de depender del perfil legacy TCP.
+- FEC/retransmision y control de congestion para video RTP.
+- Perfil HEVC validado extremo a extremo, incluido fallback claro a H.264 si el cliente o encoder falla.
+- Persistencia de ajustes, logs visibles, reset de pairing/certificado desde UI y estado de cliente conectado.
+- Pruebas instrumentadas reales para TLS/NVHTTP/RTSP y creacion de encoder con `COLOR_FormatSurface`.
+- Pulido visual: UI OLED oscura inspirada en Moonlight, ya iniciada en `MainActivity`, con componentes propios sin AndroidX.
+
 ## Arquitectura
 
 ```mermaid
