@@ -55,6 +55,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - CBR si el encoder lo soporta
   - `KEY_LOW_LATENCY = 1` en Android R+
   - `KEY_MAX_B_FRAMES = 0` en Android Q+
+  - `KEY_REPEAT_PREVIOUS_FRAME_AFTER` para mantener flujo continuo aunque Android solo entregue frames cuando hay cambios visuales
   - GOP corto de 1 segundo
   - IDR inicial y respuesta a peticiones IDR de cliente
   - deteccion de IDR por NAL H.264/HEVC, no solo por `MediaCodec.BufferInfo.flags`, para reinyectar SPS/PPS/VPS aunque encoders Qualcomm no marquen keyframe
@@ -70,7 +71,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - `/applist` anuncia `Desktop` y `Android Screen` con XML compacto compatible con el parser de Moonlight/Artemis
   - `/appasset` devuelve un PNG minimo para evitar bloqueos de clientes que pidan portada tras leer la lista
   - `/launch`, `/resume` y `/cancel` actualizan `currentgame` para que el cliente vea estado basico de sesion
-  - `/launch` acepta parametros de modo si algun cliente los envia, pero Moonlight common-c normalmente solo anade `corever=1`; por eso la configuracion efectiva se toma de RTSP `ANNOUNCE`
+  - `/launch` acepta parametros de modo si algun cliente los envia y los deja como contexto preliminar para RTSP, pero no arranca el encoder; la configuracion efectiva y el inicio del pipeline se hacen en RTSP `ANNOUNCE`
 - Pairing:
   - certificado self-signed via AndroidKeyStore
   - `uniqueid` persistente en preferencias locales para que Artemis/Moonlight no trate cada arranque como un host nuevo

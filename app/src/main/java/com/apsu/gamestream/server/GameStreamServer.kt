@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import com.apsu.gamestream.crypto.ServerIdentity
 import com.apsu.gamestream.encoder.EncodedFrame
+import com.apsu.gamestream.model.CodecPreference
 import com.apsu.gamestream.model.StreamConfig
 import com.apsu.gamestream.pairing.PairingPin
 import com.apsu.gamestream.pairing.PairingProtocol
@@ -113,7 +114,16 @@ class GameStreamServer(
 
     private fun acceptLaunchConfig(requestedConfig: StreamConfig?): Boolean {
         onLog("Launch requested by client")
-        return requestedConfig?.let { acceptStreamConfig(it, "Launch") } ?: true
+        if (requestedConfig != null) {
+            activeConfig = requestedConfig
+            activeVideoMime = advertisedMimeFor(requestedConfig)
+            onLog(
+                "Launch stream config noted for RTSP: ${requestedConfig.resolutionLabel} " +
+                    "${requestedConfig.fps}fps ${requestedConfig.bitrate / 1_000_000} Mbps " +
+                    requestedConfig.codecPreference.name,
+            )
+        }
+        return true
     }
 
     private fun acceptStreamConfig(config: StreamConfig, source: String): Boolean {
@@ -168,6 +178,13 @@ class GameStreamServer(
         videoTransport = null
         onLog("GameStream control servers stopped")
     }
+
+    private fun advertisedMimeFor(config: StreamConfig): String =
+        when (config.codecPreference) {
+            CodecPreference.HEVC -> "video/hevc"
+            CodecPreference.H264 -> "video/avc"
+            CodecPreference.AUTO -> activeVideoMime
+        }
 
     fun onEncodedFrame(frame: EncodedFrame) {
         val count = frameCount.incrementAndGet()
