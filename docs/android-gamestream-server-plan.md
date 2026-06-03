@@ -107,7 +107,7 @@ La razon es practica. Con `appversion 7.1.431.0`, Moonlight usa control stream E
   - input por TCP `35043`
   - video sin frame header moderno
 
-Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiendo y se anuncia en SDP con el marcador que Moonlight usa para detectar H.265. En modo Auto, si el cliente negocia HEVC en `bitStreamFormat`, el pipeline se abre con `video/hevc`; si negocia H.264, se abre con `video/avc`.
+Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiendo y se anuncia en SDP con el marcador que Moonlight usa para detectar H.265 solo cuando el fallback de la app esta en HEVC. En modo Auto, el host anuncia H.264 por defecto porque HEVC ya produce flujo continuo en Snapdragon pero aun congela Moonlight iPad en la ruta legacy actual.
 Si un cliente muestra `conexion lenta al PC`, la primera prueba debe volver a H.264 1080p60 16 Mbps con audio desactivado; los logs `Sent video frame...` confirman que el host esta enviando UDP al peer.
 Si la imagen se congela pero el servicio sigue en foreground y los logs siguen mostrando `Encoded frame`/`Sent video frame`, no es un problema de app en segundo plano: normalmente indica que el cliente perdio referencia y necesita un IDR valido con SPS/PPS/VPS.
 

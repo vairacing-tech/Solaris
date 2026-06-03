@@ -458,9 +458,9 @@ class MainActivity : Activity() {
         val editor = streamPrefs.edit()
             .putInt(PREF_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
             .putBoolean(PREF_AUDIO_ENABLED, false)
-        if (version < 3) {
+        if (version < 4) {
             editor
-                .putInt(PREF_CODEC_INDEX, CodecPreference.AUTO.ordinal)
+                .putInt(PREF_CODEC_INDEX, CodecPreference.H264.ordinal)
                 .putInt(PREF_RESOLUTION_INDEX, 1)
                 .putInt(PREF_FPS_INDEX, 2)
                 .putInt(PREF_BITRATE_MBPS, 16)
@@ -584,7 +584,7 @@ class MainActivity : Activity() {
         private const val PREF_BITRATE_MBPS = "bitrate_mbps"
         private const val PREF_AUDIO_ENABLED = "audio_enabled"
         private const val PREF_SETTINGS_VERSION = "settings_version"
-        private const val CURRENT_SETTINGS_VERSION = 3
+        private const val CURRENT_SETTINGS_VERSION = 4
         private val FPS_OPTIONS = listOf(30, 45, 60, 90, 120)
 
         private const val COLOR_BLACK = 0xFF000000.toInt()

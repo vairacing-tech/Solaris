@@ -248,15 +248,7 @@ class ProjectionStreamService : Service() {
         when (config.codecPreference) {
             CodecPreference.HEVC -> "video/hevc"
             CodecPreference.H264 -> "video/avc"
-            CodecPreference.AUTO -> runCatching {
-                EncoderSelector.select(
-                    codecPreference = CodecPreference.HEVC,
-                    width = config.width,
-                    height = config.height,
-                    fps = config.fps,
-                    bitrate = config.bitrate,
-                ).mime
-            }.getOrDefault("video/avc")
+            CodecPreference.AUTO -> "video/avc"
         }
 
     private fun updatePairingPin(pin: String?, source: String) {
