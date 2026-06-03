@@ -23,12 +23,16 @@ class VideoRtpTransport(
     @Volatile private var peer: InetSocketAddress? = null
     private var receiveThread: Thread? = null
     private var rtpSequence = 1
+    private var streamPacketIndex = 0
     private var frameIndex = 1
     private var sentFrames = 0L
     @Volatile private var packetSize = DEFAULT_GAMESTREAM_PACKET_SIZE
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
+        rtpSequence = 1
+        streamPacketIndex = 0
+        frameIndex = 1
         sentFrames = 0L
         socket = DatagramSocket(port, InetAddress.getByName("0.0.0.0")).also {
             it.soTimeout = 1_000
@@ -60,6 +64,9 @@ class VideoRtpTransport(
         runCatching { socket?.close() }
         socket = null
         peer = null
+        rtpSequence = 1
+        streamPacketIndex = 0
+        frameIndex = 1
         sentFrames = 0L
         receiveThread = null
     }
@@ -91,12 +98,14 @@ class VideoRtpTransport(
         var offset = 0
         for (packetIndex in 0 until dataPackets) {
             val chunkLength = min(payloadUnitSize, payload.size - offset)
-            val sequence = rtpSequence++ and 0xFFFF
+            val sequence = nextRtpSequence()
+            val currentStreamPacketIndex = nextStreamPacketIndex()
             val flags = FLAG_CONTAINS_PIC_DATA or
                 (if (packetIndex == 0) FLAG_SOF else 0) or
                 (if (packetIndex == dataPackets - 1) FLAG_EOF else 0)
             val packet = buildPacket(
                 sequence = sequence,
+                streamPacketIndex = currentStreamPacketIndex,
                 timestamp = timestamp,
                 frameIndex = currentFrame,
                 packetIndex = packetIndex,
@@ -115,6 +124,18 @@ class VideoRtpTransport(
         }
     }
 
+    private fun nextRtpSequence(): Int {
+        val sequence = rtpSequence and 0xFFFF
+        rtpSequence = (rtpSequence + 1) and 0xFFFF
+        return sequence
+    }
+
+    private fun nextStreamPacketIndex(): Int {
+        val index = streamPacketIndex and STREAM_PACKET_INDEX_MASK
+        streamPacketIndex = (streamPacketIndex + 1) and STREAM_PACKET_INDEX_MASK
+        return index
+    }
+
     private fun buildFramePayload(encodedFrame: ByteArray, frameType: Int): ByteArray {
         if (!includeFrameHeader) return encodedFrame
         val frameHeader = ByteBuffer.allocate(FRAME_HEADER_SIZE)
@@ -130,6 +151,7 @@ class VideoRtpTransport(
 
     private fun buildPacket(
         sequence: Int,
+        streamPacketIndex: Int,
         timestamp: Int,
         frameIndex: Int,
         packetIndex: Int,
@@ -152,7 +174,7 @@ class VideoRtpTransport(
         buffer.putInt(0)
 
         buffer.order(ByteOrder.LITTLE_ENDIAN)
-        buffer.putInt(sequence shl 8)
+        buffer.putInt(NvVideoPacketHeader.encodeStreamPacketIndex(streamPacketIndex))
         buffer.putInt(frameIndex)
         buffer.put(flags.toByte())
         buffer.put(0)
@@ -172,9 +194,17 @@ class VideoRtpTransport(
         private const val MAX_GAMESTREAM_PACKET_SIZE = 1392
         private const val FRAME_HEADER_SIZE = 8
         private const val SENT_FRAME_LOG_INTERVAL = 300L
+        private const val STREAM_PACKET_INDEX_MASK = 0x00FF_FFFF
 
         private const val FLAG_CONTAINS_PIC_DATA = 0x01
         private const val FLAG_EOF = 0x02
         private const val FLAG_SOF = 0x04
     }
+}
+
+internal object NvVideoPacketHeader {
+    private const val STREAM_PACKET_INDEX_MASK = 0x00FF_FFFF
+
+    fun encodeStreamPacketIndex(index: Int): Int =
+        (index and STREAM_PACKET_INDEX_MASK) shl 8
 }
