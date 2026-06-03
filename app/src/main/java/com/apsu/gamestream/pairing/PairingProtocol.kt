@@ -57,11 +57,11 @@ class PairingProtocol(
         val aesKey = hash.digest(salt + pin.toByteArray(Charsets.UTF_8)).copyOf(16)
         sessions[uniqueId] = PairSession(uniqueId, aesKey, clientCert)
         return """
-            <?xml version="1.0" encoding="utf-8"?>
-            <root status_code="200">
-              <paired>1</paired>
-              <plaincert>${Hex.encode(serverIdentity.certificate.encoded)}</plaincert>
-            </root>
+              <?xml version="1.0" encoding="utf-8"?>
+              <root status_code="200">
+                <paired>1</paired>
+                <plaincert>${Hex.encode(serverIdentity.certificatePemBytes)}</plaincert>
+              </root>
         """.trimIndent()
     }
 

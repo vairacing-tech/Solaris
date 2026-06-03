@@ -22,6 +22,7 @@ import javax.security.auth.x500.X500Principal
 class ServerIdentity private constructor(
     val certificate: X509Certificate,
     private val privateKey: PrivateKey,
+    val certificatePemBytes: ByteArray,
     val sslServerSocketFactory: SSLServerSocketFactory,
 ) {
     fun signSha256(data: ByteArray): ByteArray {
@@ -77,6 +78,7 @@ class ServerIdentity private constructor(
             return ServerIdentity(
                 certificate = certificate,
                 privateKey = privateKey,
+                certificatePemBytes = CertificateEncoding.pemBytesFor(certificate),
                 sslServerSocketFactory = sslContext.serverSocketFactory,
             )
         }
