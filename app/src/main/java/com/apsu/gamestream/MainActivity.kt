@@ -114,7 +114,7 @@ class MainActivity : Activity() {
             letterSpacing = 0f
         })
         root.addView(TextView(this).apply {
-            text = "Android GameStream host"
+            text = "OLED GameStream host"
             textSize = 14f
             setTextColor(COLOR_MUTED)
             setPadding(0, 0, 0, dp(8))
@@ -189,13 +189,13 @@ class MainActivity : Activity() {
         }
         val streamSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(labeled("Codec", codecSpinner))
-            addView(labeled("Resolution", resolutionSpinner))
-            addView(labeled("FPS", fpsSpinner))
-            addView(labeled("Bitrate (Mbps)", bitrateInput))
+            addView(labeled("Fallback codec", codecSpinner))
+            addView(labeled("Fallback resolution", resolutionSpinner))
+            addView(labeled("Fallback FPS", fpsSpinner))
+            addView(labeled("Fallback bitrate (Mbps)", bitrateInput))
             addView(audioSwitch)
         }
-        root.addView(section("STREAM", streamSection))
+        root.addView(section("CLIENT DEFAULTS", streamSection))
 
         encoderText = TextView(this).apply {
             textSize = 14f
@@ -205,16 +205,16 @@ class MainActivity : Activity() {
         val diagnosticsSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(encoderText)
-            addView(actionButton("Check hardware encoder", ButtonTone.SECONDARY).apply {
+            addView(actionButton("Check fallback encoder", ButtonTone.SECONDARY).apply {
                 setOnClickListener { refreshEncoderPreview() }
             })
         }
         root.addView(section("DIAGNOSTICS", diagnosticsSection))
 
-        root.addView(actionButton("Start server", ButtonTone.PRIMARY).apply {
+        root.addView(actionButton("Start host", ButtonTone.PRIMARY).apply {
             setOnClickListener { requestProjectionAndStart() }
         })
-        root.addView(actionButton("Stop server", ButtonTone.DANGER).apply {
+        root.addView(actionButton("Stop host", ButtonTone.DANGER).apply {
             setOnClickListener { startService(ProjectionStreamService.stopIntent(this@MainActivity)) }
         })
 
@@ -365,20 +365,11 @@ class MainActivity : Activity() {
     private fun requestProjectionAndStart() {
         val config = selectedConfig()
         saveSelectedSettings()
-        val encoder = runCatching {
-            EncoderSelector.select(
-                config.codecPreference,
-                config.width,
-                config.height,
-                config.fps,
-                config.bitrate,
-            )
-        }.getOrElse {
-            Toast.makeText(this, it.message ?: "No hardware encoder", Toast.LENGTH_LONG).show()
-            refreshEncoderPreview()
-            return
-        }
-        Toast.makeText(this, "Using ${encoder.codecName}", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            "Host will wait for client stream settings; fallback ${config.resolutionLabel} ${config.fps}fps",
+            Toast.LENGTH_LONG,
+        ).show()
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
@@ -463,14 +454,15 @@ class MainActivity : Activity() {
         val version = streamPrefs.getInt(PREF_SETTINGS_VERSION, 0)
         if (version >= CURRENT_SETTINGS_VERSION) return
 
-        val savedCodec = streamPrefs.getInt(PREF_CODEC_INDEX, CodecPreference.H264.ordinal)
         val editor = streamPrefs.edit()
             .putInt(PREF_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
             .putBoolean(PREF_AUDIO_ENABLED, false)
-        if (savedCodec == CodecPreference.HEVC.ordinal) {
+        if (version < 3) {
             editor
-                .putInt(PREF_CODEC_INDEX, CodecPreference.H264.ordinal)
-                .putInt(PREF_BITRATE_MBPS, streamPrefs.getInt(PREF_BITRATE_MBPS, 16).coerceAtMost(16))
+                .putInt(PREF_CODEC_INDEX, CodecPreference.AUTO.ordinal)
+                .putInt(PREF_RESOLUTION_INDEX, 1)
+                .putInt(PREF_FPS_INDEX, 2)
+                .putInt(PREF_BITRATE_MBPS, 16)
         }
         editor.apply()
     }
@@ -490,10 +482,10 @@ class MainActivity : Activity() {
         }
         encoderText.text = result.fold(
             onSuccess = {
-                "Hardware encoder: ${it.codecName}\nVendor: ${it.vendor}, CBR=${it.cbrSupported}, lowLatency=${it.lowLatencyFeature}"
+                "Fallback hardware encoder: ${it.codecName}\nVendor: ${it.vendor}, CBR=${it.cbrSupported}, lowLatency=${it.lowLatencyFeature}"
             },
             onFailure = {
-                "No compatible hardware encoder for ${config.codecPreference.name} ${config.resolutionLabel} ${config.fps}fps at ${config.bitrate / 1_000_000} Mbps.\n${it.message}"
+                "No compatible fallback hardware encoder for ${config.codecPreference.name} ${config.resolutionLabel} ${config.fps}fps at ${config.bitrate / 1_000_000} Mbps.\n${it.message}"
             },
         )
     }
@@ -505,6 +497,7 @@ class MainActivity : Activity() {
         return "Pairing PIN: $activePin\n" +
             "Paired clients: $pairedCount\n" +
             "Client: ${clientSummary()}\n" +
+            "Client controls resolution/FPS/bitrate at RTSP ANNOUNCE\n" +
             "Protocol ${GameStreamProtocol.APP_VERSION} legacy TCP control\n" +
             "HTTP ${Ports.HTTP}  HTTPS ${Ports.HTTPS}  RTSP ${Ports.RTSP}  Video UDP ${Ports.VIDEO}\n" +
             "Control ${Ports.LEGACY_CONTROL}  Input ${Ports.LEGACY_INPUT}  Audio UDP ${Ports.AUDIO}\n" +
@@ -588,7 +581,7 @@ class MainActivity : Activity() {
         private const val PREF_BITRATE_MBPS = "bitrate_mbps"
         private const val PREF_AUDIO_ENABLED = "audio_enabled"
         private const val PREF_SETTINGS_VERSION = "settings_version"
-        private const val CURRENT_SETTINGS_VERSION = 2
+        private const val CURRENT_SETTINGS_VERSION = 3
         private val FPS_OPTIONS = listOf(30, 45, 60, 90, 120)
 
         private const val COLOR_BLACK = 0xFF000000.toInt()

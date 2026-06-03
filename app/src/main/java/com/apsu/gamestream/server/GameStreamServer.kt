@@ -14,6 +14,7 @@ class GameStreamServer(
     context: Context,
     initialPin: String?,
     private val onIdrRequested: () -> Unit,
+    private val onStreamConfigRequested: (StreamConfig) -> String?,
     private val onPinChanged: (String) -> Unit,
     private val onLog: (String) -> Unit,
 ) {
@@ -29,10 +30,14 @@ class GameStreamServer(
     private var nvHttpServer: NvHttpServer? = null
     private var rtspServer: RtspServer? = null
     @Volatile private var activePin: String? = initialPin
+    @Volatile private var activeConfig: StreamConfig = StreamConfig()
+    @Volatile private var activeVideoMime: String = "video/avc"
     private val pinLock = Object()
 
-    fun start(config: StreamConfig, activeMime: String) {
+    fun start(config: StreamConfig, advertisedVideoMime: String) {
         if (nvHttpServer != null || rtspServer != null) return
+        activeConfig = config
+        activeVideoMime = advertisedVideoMime
         ClientConnectionState.clear()
         frameCount.set(0)
         val identity = ServerIdentity.load(appContext)
@@ -76,13 +81,10 @@ class GameStreamServer(
             pairingStore = pairingStore,
             pairingProtocol = pairingProtocol,
             uniqueId = hostIdentity.uniqueId,
-            currentConfig = { config },
-            activeVideoMime = { activeMime },
+            currentConfig = { activeConfig },
+            activeVideoMime = { activeVideoMime },
             onPinReceived = { pin -> setPairingPin(pin) },
-            onLaunchRequested = {
-                onLog("Launch requested by client")
-                true
-            },
+            onLaunchRequested = { requestedConfig -> acceptLaunchConfig(requestedConfig) },
             onLog = onLog,
         ).also { it.start() }
         mdnsAdvertiser = MdnsAdvertiser(
@@ -93,9 +95,12 @@ class GameStreamServer(
         ).also { it.start() }
         rtspServer = RtspServer(
             port = Ports.RTSP,
-            currentConfig = { config },
-            activeVideoMime = { activeMime },
+            currentConfig = { activeConfig },
+            activeVideoMime = { activeVideoMime },
             onVideoPacketSize = { size -> videoTransport?.setPacketSize(size) },
+            onStreamConfigRequested = { requestedConfig ->
+                acceptStreamConfig(requestedConfig, "RTSP ANNOUNCE")
+            },
             onPlay = {
                 onLog("RTSP PLAY received; requesting IDR and waiting for video UDP ping on ${Ports.VIDEO}")
                 onIdrRequested()
@@ -104,6 +109,22 @@ class GameStreamServer(
         ).also { it.start() }
         val pinState = activePin ?: "not set"
         onLog("Pairing PIN $pinState; GameStream servers listening on ${Ports.HTTP}/${Ports.HTTPS}/${Ports.RTSP}/${Ports.VIDEO}")
+    }
+
+    private fun acceptLaunchConfig(requestedConfig: StreamConfig?): Boolean {
+        onLog("Launch requested by client")
+        return requestedConfig?.let { acceptStreamConfig(it, "Launch") } ?: true
+    }
+
+    private fun acceptStreamConfig(config: StreamConfig, source: String): Boolean {
+        val mime = onStreamConfigRequested(config) ?: run {
+            onLog("$source stream config rejected: ${config.resolutionLabel} ${config.fps}fps ${config.bitrate / 1_000_000} Mbps ${config.codecPreference.name}")
+            return false
+        }
+        activeConfig = config
+        activeVideoMime = mime
+        onLog("$source stream config accepted: ${config.resolutionLabel} ${config.fps}fps ${config.bitrate / 1_000_000} Mbps ${mimeLabel(mime)}")
+        return true
     }
 
     fun setPairingPin(pin: String) {
@@ -158,5 +179,12 @@ class GameStreamServer(
 
     companion object {
         private const val PAIRING_PIN_TIMEOUT_MILLIS = 90_000L
+
+        private fun mimeLabel(mime: String): String =
+            when (mime) {
+                "video/hevc" -> "HEVC"
+                "video/avc" -> "H.264"
+                else -> mime
+            }
     }
 }

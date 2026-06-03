@@ -31,7 +31,7 @@ class NvHttpServer(
     private val currentConfig: () -> StreamConfig,
     private val activeVideoMime: () -> String,
     private val onPinReceived: (String) -> Unit,
-    private val onLaunchRequested: () -> Boolean,
+    private val onLaunchRequested: (StreamConfig?) -> Boolean,
     private val onLog: (String) -> Unit,
 ) {
     private val running = AtomicBoolean(false)
@@ -183,7 +183,8 @@ class NvHttpServer(
     }
 
     private fun launch(localAddress: String, query: Map<String, String>, resume: Boolean = false): String {
-        val accepted = onLaunchRequested()
+        val requestedConfig = ClientStreamConfig.fromLaunchQuery(query, currentConfig())
+        val accepted = onLaunchRequested(requestedConfig)
         return if (accepted) {
             val appId = query.firstInt("appid", "appId", "id").coerceAtLeast(1)
             currentGameId.set(appId)

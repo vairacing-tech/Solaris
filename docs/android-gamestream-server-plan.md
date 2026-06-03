@@ -26,6 +26,12 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
 - Foreground service `ProjectionStreamService` con tipo `mediaProjection`.
 - `PARTIAL_WAKE_LOCK` mientras el streaming esta activo para evitar reposo durante sesiones largas.
 - Captura directa: `MediaProjection -> VirtualDisplay -> MediaCodec input Surface`.
+- Arranque diferido del pipeline: aceptar `MediaProjection` solo deja el host en `READY`; `VirtualDisplay` y `MediaCodec` se crean cuando Moonlight/Artemis lanza una app y envia la configuracion real por RTSP `ANNOUNCE`.
+- Configuracion guiada por cliente:
+  - el host parsea `x-nv-video[0].clientViewportWd`, `clientViewportHt`, `maxFPS`, `packetSize`, bitrates `initialBitrateKbps`/`configuredBitrateKbps`/VQOS y `x-nv-vqos[0].bitStreamFormat`.
+  - resolucion, FPS y bitrate efectivos vienen del cliente cuando estan presentes.
+  - los controles de la app son fallback/anuncio inicial, no el valor forzado de la sesion.
+  - si el cliente pide una combinacion no soportada por encoder hardware, el servidor rechaza `ANNOUNCE` con error RTSP en vez de quedar cargando.
 - Encoder hardware obligatorio:
   - H.264: `video/avc`
   - HEVC: `video/hevc`
@@ -34,10 +40,10 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - rechazo de `c2.android.*`, `OMX.google.*` y nombres software
   - prioridad Snapdragon/Qualcomm: `c2.qti.*`, `OMX.qcom.*`, `qti`, `qcom`, `qualcomm`
 - Controles visibles:
-  - codec: Auto, H.264, HEVC
-  - resolucion: 720p, 1080p, 1440p
-  - FPS: 30, 45, 60, 90, 120
-  - bitrate manual en Mbps
+  - fallback codec: Auto, H.264, HEVC
+  - fallback resolucion: 720p, 1080p, 1440p
+  - fallback FPS: 30, 45, 60, 90, 120
+  - fallback bitrate manual en Mbps
   - audio capture on/off, desactivado por defecto hasta implementar RTP audio real
   - persistencia local de codec, resolucion, FPS, bitrate y audio
   - migracion de ajustes antiguos HEVC/bitrate alto hacia H.264 1080p60 16 Mbps como perfil de compatibilidad inicial
@@ -64,6 +70,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - `/applist` anuncia `Desktop` y `Android Screen` con XML compacto compatible con el parser de Moonlight/Artemis
   - `/appasset` devuelve un PNG minimo para evitar bloqueos de clientes que pidan portada tras leer la lista
   - `/launch`, `/resume` y `/cancel` actualizan `currentgame` para que el cliente vea estado basico de sesion
+  - `/launch` acepta parametros de modo si algun cliente los envia, pero Moonlight common-c normalmente solo anade `corever=1`; por eso la configuracion efectiva se toma de RTSP `ANNOUNCE`
 - Pairing:
   - certificado self-signed via AndroidKeyStore
   - `uniqueid` persistente en preferencias locales para que Artemis/Moonlight no trate cada arranque como un host nuevo
@@ -98,7 +105,7 @@ La razon es practica. Con `appversion 7.1.431.0`, Moonlight usa control stream E
   - input por TCP `35043`
   - video sin frame header moderno
 
-Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiendo y se anuncia en SDP con el marcador que Moonlight usa para detectar H.265, pero la ruta que primero debe validarse manualmente es H.264 1080p60.
+Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiendo y se anuncia en SDP con el marcador que Moonlight usa para detectar H.265. En modo Auto, si el cliente negocia HEVC en `bitStreamFormat`, el pipeline se abre con `video/hevc`; si negocia H.264, se abre con `video/avc`.
 Si un cliente muestra `conexion lenta al PC`, la primera prueba debe volver a H.264 1080p60 16 Mbps con audio desactivado; los logs `Sent video frame...` confirman que el host esta enviando UDP al peer.
 Si la imagen se congela pero el servicio sigue en foreground y los logs siguen mostrando `Encoded frame`/`Sent video frame`, no es un problema de app en segundo plano: normalmente indica que el cliente perdio referencia y necesita un IDR valido con SPS/PPS/VPS.
 
@@ -106,13 +113,14 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 
 1. Instalar `app-debug.apk`.
 2. Abrir Apsu GameStream en el Android servidor.
-3. Elegir H.264, 1080p, 60 FPS y bitrate 16 Mbps para la primera prueba.
-4. Pulsar `Start server`.
+3. Dejar `Fallback codec` en Auto o elegir H.264 para una primera prueba conservadora.
+4. Pulsar `Start host`.
 5. Aceptar el permiso de captura de pantalla.
 6. En Moonlight/Artemis, agregar el host usando la IP mostrada en la app.
 7. En Artemis/Moonlight, iniciar pairing y leer el PIN de 4 digitos que muestra el cliente.
 8. En Apsu, escribir ese PIN en `Pairing PIN shown by Artemis/Moonlight` y pulsar `Use pairing PIN`.
 9. Confirmar el pairing en Artemis/Moonlight y lanzar `Android Screen`.
+10. Elegir resolucion, FPS, bitrate y codec desde Moonlight/Artemis; el host validara esa peticion contra `MediaCodecList` antes de arrancar captura.
 
 ## Limitaciones reales del APK actual
 
@@ -122,7 +130,7 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 - No hay FEC ni retransmision avanzada en video.
 - No hay RTSP cifrado ni control stream ENet moderno.
 - La compatibilidad HEVC con Moonlight debe probarse en dispositivo real; el encoder hardware y el SDP estan implementados, pero el primer objetivo de interoperabilidad es H.264.
-- La emision empieza al iniciar el servicio y descarta frames hasta recibir el ping UDP de video del cliente.
+- El host no empieza a codificar al iniciar el servicio; espera `ANNOUNCE`. Si el cliente no llega a RTSP, no habra frames ni carga de encoder.
 
 ## Pendiente por implementar
 
@@ -140,13 +148,15 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 ```mermaid
 flowchart LR
   UI["MainActivity"] --> SVC["ProjectionStreamService"]
-  SVC --> MP["MediaProjection"]
-  MP --> VD["VirtualDisplay"]
+  SVC --> MP["MediaProjection permission"]
+  SVC --> NV["NvHttpServer 47989/47984"]
+  SVC --> RTSP["RtspServer 48010"]
+  RTSP --> CFG["Client stream config from ANNOUNCE"]
+  CFG --> SVC
+  SVC --> VD["VirtualDisplay"]
   VD --> SURF["MediaCodec input Surface"]
   SURF --> ENC["EncoderSession"]
   ENC --> RTP["VideoRtpTransport UDP 47998"]
-  SVC --> NV["NvHttpServer 47989/47984"]
-  SVC --> RTSP["RtspServer 48010"]
   SVC --> CTRL["LegacyControlTcpServer 47995"]
   SVC --> IN["TcpInputSinkServer 35043"]
   SVC --> AUD["AudioPingSink 48000"]
@@ -154,7 +164,8 @@ flowchart LR
 
 ## Clases principales
 
-- `MainActivity.kt`: UI, seleccion de parametros, permiso `MediaProjection`.
+- `MainActivity.kt`: UI, fallback de parametros, permiso `MediaProjection`.
+- `ClientStreamConfig.kt`: parser de configuracion enviada por `/launch` y RTSP `ANNOUNCE`.
 - `StreamConfig.kt`: codec, resolucion, FPS, bitrate, audio y baja latencia.
 - `EncoderSelector.kt`: seleccion y validacion de encoder hardware.
 - `EncoderSession.kt`: configuracion `MediaCodec`, salida Annex B y keyframes con CSD.
@@ -175,12 +186,12 @@ flowchart LR
 - Instalacion manual:
   - `C:\Users\CJF\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r app\build\outputs\apk\debug\app-debug.apk`
 - Prueba principal:
-  - H.264 1080p60 16 Mbps en Snapdragon.
+  - H.264 1080p60 16 Mbps configurado desde Moonlight/Artemis en Snapdragon.
   - Pairing desde Moonlight.
   - Launch de `Android Screen`.
   - Confirmar primer frame antes de 10 segundos.
 - Prueba HEVC:
-  - HEVC 1080p60 si `Check hardware encoder` acepta el encoder.
+  - HEVC 1080p60 configurado desde Moonlight/Artemis si `Check fallback encoder` acepta HEVC o el host esta en Auto con HEVC disponible.
   - Verificar que Moonlight negocia H.265 y recibe IDR con VPS/SPS/PPS.
 - Pruebas negativas:
   - seleccionar HEVC en un dispositivo sin encoder HEVC hardware debe fallar antes de iniciar.

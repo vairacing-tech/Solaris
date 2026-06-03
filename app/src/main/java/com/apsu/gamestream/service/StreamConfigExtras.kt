@@ -27,6 +27,6 @@ object StreamConfigExtras {
         height = intent.getIntExtra(EXTRA_HEIGHT, 1080),
         fps = intent.getIntExtra(EXTRA_FPS, 60),
         bitrate = intent.getIntExtra(EXTRA_BITRATE, 16_000_000),
-        audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO, true),
+        audioEnabled = intent.getBooleanExtra(EXTRA_AUDIO, false),
     )
 }

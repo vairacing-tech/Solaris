@@ -22,6 +22,7 @@ import com.apsu.gamestream.audio.AudioCaptureSession
 import com.apsu.gamestream.crypto.ServerIdentity
 import com.apsu.gamestream.encoder.EncoderSelector
 import com.apsu.gamestream.encoder.EncoderSession
+import com.apsu.gamestream.model.CodecPreference
 import com.apsu.gamestream.model.ServerState
 import com.apsu.gamestream.model.StreamConfig
 import com.apsu.gamestream.pairing.PairingStore
@@ -39,6 +40,9 @@ class ProjectionStreamService : Service() {
     private var audioCaptureSession: AudioCaptureSession? = null
     private var gameStreamServer: GameStreamServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var fallbackConfig: StreamConfig = StreamConfig()
+    private var activeStreamConfig: StreamConfig? = null
+    private var activeEncoderMime: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -84,18 +88,12 @@ class ProjectionStreamService : Service() {
         }
 
         val config = StreamConfigExtras.from(intent)
-        updateStatus(ServerState.WAITING_FOR_PROJECTION, "Starting ${config.resolutionLabel} ${config.fps}fps")
-        startInForeground("Starting ${config.resolutionLabel} ${config.fps}fps")
+        fallbackConfig = config
+        updateStatus(ServerState.WAITING_FOR_PROJECTION, "Starting host with ${config.resolutionLabel} ${config.fps}fps fallback")
+        startInForeground("Starting GameStream host")
         acquireWakeLock()
 
         try {
-            val encoderInfo = EncoderSelector.select(
-                codecPreference = config.codecPreference,
-                width = config.width,
-                height = config.height,
-                fps = config.fps,
-                bitrate = config.bitrate,
-            )
             val mediaProjectionManager =
                 getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val projection = mediaProjectionManager.getMediaProjection(resultCode, projectionData)
@@ -111,26 +109,73 @@ class ProjectionStreamService : Service() {
                 context = applicationContext,
                 initialPin = pin,
                 onIdrRequested = { encoderSession?.requestSyncFrame() },
+                onStreamConfigRequested = { requestedConfig -> startOrRestartCapture(requestedConfig) },
                 onPinChanged = { newPin -> currentPin = newPin },
                 onLog = { log(it) },
             )
-            server.start(config, encoderInfo.mime)
             gameStreamServer = server
+            server.start(config, advertisedMimeFor(config))
+            updateStatus(ServerState.READY, "Host ready; waiting for client stream settings")
+            startInForeground("Host ready for Moonlight/Artemis")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to start host", t)
+            updateStatus(ServerState.ERROR, t.message ?: "Failed to start host")
+            stopStreaming()
+            stopSelf()
+        }
+    }
 
+    @Synchronized
+    private fun startOrRestartCapture(config: StreamConfig): String? {
+        val activeProjection = projection ?: run {
+            updateStatus(ServerState.ERROR, "MediaProjection is not available")
+            return null
+        }
+        val currentMime = activeEncoderMime
+        if (encoderSession != null && activeStreamConfig == config && currentMime != null) {
+            encoderSession?.requestSyncFrame()
+            return currentMime
+        }
+
+        updateStatus(
+            ServerState.READY,
+            "Configuring ${config.resolutionLabel} ${config.fps}fps ${config.codecPreference.name}",
+        )
+        val encoderInfo = runCatching {
+            EncoderSelector.select(
+                codecPreference = config.codecPreference,
+                width = config.width,
+                height = config.height,
+                fps = config.fps,
+                bitrate = config.bitrate,
+            )
+        }.getOrElse { throwable ->
+            Log.e(TAG, "Client stream config rejected", throwable)
+            updateStatus(ServerState.ERROR, throwable.message ?: "No compatible hardware encoder")
+            return null
+        }
+
+        stopCapturePipeline()
+        val server = gameStreamServer ?: run {
+            updateStatus(ServerState.ERROR, "GameStream server is not running")
+            return null
+        }
+
+        return try {
             val encoder = EncoderSession(
                 config = config,
                 encoderInfo = encoderInfo,
                 onFrame = { frame -> server.onEncodedFrame(frame) },
                 onError = { throwable ->
                     updateStatus(ServerState.ERROR, "Encoder error: ${throwable.message}")
-                    stopStreaming()
+                    stopCapturePipeline()
                 },
             )
             val inputSurface = encoder.start()
             encoderSession = encoder
 
             val metrics = resources.displayMetrics
-            virtualDisplay = projection.createVirtualDisplay(
+            virtualDisplay = activeProjection.createVirtualDisplay(
                 "ApsuGameStream",
                 config.width,
                 config.height,
@@ -143,7 +188,7 @@ class ProjectionStreamService : Service() {
 
             if (config.audioEnabled) {
                 val audioSession = AudioCaptureSession(
-                    projection = projection,
+                    projection = activeProjection,
                     onPcm = { pcm, _ -> if (pcm.isNotEmpty()) Unit },
                     onError = { throwable -> log("Audio capture disabled: ${throwable.message}") },
                 )
@@ -156,26 +201,37 @@ class ProjectionStreamService : Service() {
                     }
             }
 
+            activeStreamConfig = config
+            activeEncoderMime = encoderInfo.mime
             updateStatus(
                 ServerState.STREAMING,
-                "Streaming via ${encoderInfo.codecName} (${encoderInfo.vendor})",
+                "Streaming ${config.resolutionLabel} ${config.fps}fps via ${encoderInfo.codecName} (${encoderInfo.vendor})",
             )
             startInForeground("Streaming ${config.resolutionLabel} ${config.fps}fps")
+            encoderInfo.mime
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to start stream", t)
-            updateStatus(ServerState.ERROR, t.message ?: "Failed to start stream")
-            stopStreaming()
-            stopSelf()
+            Log.e(TAG, "Failed to start capture pipeline", t)
+            stopCapturePipeline()
+            updateStatus(ServerState.ERROR, t.message ?: "Failed to start capture pipeline")
+            null
         }
     }
 
-    private fun stopStreaming() {
+    @Synchronized
+    private fun stopCapturePipeline() {
         audioCaptureSession?.stop()
         audioCaptureSession = null
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
         encoderSession?.stop()
         encoderSession = null
+        activeStreamConfig = null
+        activeEncoderMime = null
+    }
+
+    @Synchronized
+    private fun stopStreaming() {
+        stopCapturePipeline()
         gameStreamServer?.stop()
         gameStreamServer = null
         releaseWakeLock()
@@ -187,6 +243,21 @@ class ProjectionStreamService : Service() {
         currentPin = "----"
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
+
+    private fun advertisedMimeFor(config: StreamConfig): String =
+        when (config.codecPreference) {
+            CodecPreference.HEVC -> "video/hevc"
+            CodecPreference.H264 -> "video/avc"
+            CodecPreference.AUTO -> runCatching {
+                EncoderSelector.select(
+                    codecPreference = CodecPreference.HEVC,
+                    width = config.width,
+                    height = config.height,
+                    fps = config.fps,
+                    bitrate = config.bitrate,
+                ).mime
+            }.getOrDefault("video/avc")
+        }
 
     private fun updatePairingPin(pin: String?, source: String) {
         val normalized = PairingPin.normalize(pin) ?: run {

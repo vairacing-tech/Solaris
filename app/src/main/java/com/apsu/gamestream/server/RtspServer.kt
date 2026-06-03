@@ -18,6 +18,7 @@ class RtspServer(
     private val currentConfig: () -> StreamConfig,
     private val activeVideoMime: () -> String,
     private val onVideoPacketSize: (Int) -> Unit,
+    private val onStreamConfigRequested: (StreamConfig) -> Boolean,
     private val onPlay: () -> Unit,
     private val onLog: (String) -> Unit,
 ) {
@@ -70,8 +71,11 @@ class RtspServer(
         val target = requestLine.substringAfter(' ', "").substringBefore(' ')
         val cseq = headers["cseq"] ?: "1"
         val body = readBody(reader, headers["content-length"]?.toIntOrNull() ?: 0)
-        if (method == "ANNOUNCE") {
-            parseAnnounce(body)
+        var responseStatus = 200
+        var responseReason = "OK"
+        if (method == "ANNOUNCE" && !parseAnnounce(body)) {
+            responseStatus = 500
+            responseReason = "ERROR"
         }
         val responseBody = if (method == "DESCRIBE") describeBody() else ""
         val extraHeaders = buildList {
@@ -88,7 +92,7 @@ class RtspServer(
             }
         }
 
-        writer.write("RTSP/1.0 200 OK\r\n")
+        writer.write("RTSP/1.0 $responseStatus $responseReason\r\n")
         writer.write("CSeq: $cseq\r\n")
         extraHeaders.forEach { writer.write("$it\r\n") }
         if (responseBody.isNotEmpty()) {
@@ -112,7 +116,7 @@ class RtspServer(
         return String(chars, 0, offset)
     }
 
-    private fun parseAnnounce(body: String) {
+    private fun parseAnnounce(body: String): Boolean {
         val packetSize = PACKET_SIZE_PATTERN.find(body)
             ?.groupValues
             ?.getOrNull(1)
@@ -120,6 +124,8 @@ class RtspServer(
         if (packetSize != null) {
             onVideoPacketSize(packetSize)
         }
+        val requestedConfig = ClientStreamConfig.fromRtspAnnounce(body, currentConfig())
+        return onStreamConfigRequested(requestedConfig)
     }
 
     private fun setupHeaders(target: String): List<String> {
