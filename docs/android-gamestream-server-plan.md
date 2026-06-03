@@ -56,6 +56,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - `KEY_LOW_LATENCY = 1` en Android R+
   - `KEY_MAX_B_FRAMES = 0` en Android Q+
   - `KEY_REPEAT_PREVIOUS_FRAME_AFTER` para mantener flujo continuo aunque Android solo entregue frames cuando hay cambios visuales
+  - `KEY_PREPEND_HEADER_TO_SYNC_FRAMES = 1` y peticion IDR periodica cada segundo para recuperacion de clientes ante perdida de referencia
   - GOP corto de 1 segundo
   - IDR inicial y respuesta a peticiones IDR de cliente
   - deteccion de IDR por NAL H.264/HEVC, no solo por `MediaCodec.BufferInfo.flags`, para reinyectar SPS/PPS/VPS aunque encoders Qualcomm no marquen keyframe

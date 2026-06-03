@@ -44,6 +44,19 @@ class ProjectionStreamService : Service() {
     private var activeStreamConfig: StreamConfig? = null
     private var activeEncoderMime: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var idrHeartbeatActive = false
+
+    private val idrHeartbeat = object : Runnable {
+        override fun run() {
+            val encoder = encoderSession
+            if (encoder == null) {
+                idrHeartbeatActive = false
+                return
+            }
+            encoder.requestSyncFrame()
+            mainHandler.postDelayed(this, IDR_HEARTBEAT_MS)
+        }
+    }
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -203,6 +216,7 @@ class ProjectionStreamService : Service() {
 
             activeStreamConfig = config
             activeEncoderMime = encoderInfo.mime
+            startIdrHeartbeat()
             updateStatus(
                 ServerState.STREAMING,
                 "Streaming ${config.resolutionLabel} ${config.fps}fps via ${encoderInfo.codecName} (${encoderInfo.vendor})",
@@ -219,6 +233,7 @@ class ProjectionStreamService : Service() {
 
     @Synchronized
     private fun stopCapturePipeline() {
+        stopIdrHeartbeat()
         audioCaptureSession?.stop()
         audioCaptureSession = null
         runCatching { virtualDisplay?.release() }
@@ -227,6 +242,17 @@ class ProjectionStreamService : Service() {
         encoderSession = null
         activeStreamConfig = null
         activeEncoderMime = null
+    }
+
+    private fun startIdrHeartbeat() {
+        if (idrHeartbeatActive) return
+        idrHeartbeatActive = true
+        mainHandler.postDelayed(idrHeartbeat, IDR_HEARTBEAT_MS)
+    }
+
+    private fun stopIdrHeartbeat() {
+        idrHeartbeatActive = false
+        mainHandler.removeCallbacks(idrHeartbeat)
     }
 
     @Synchronized
@@ -371,6 +397,7 @@ class ProjectionStreamService : Service() {
         const val ACTION_RESET_HOST_IDENTITY = "com.apsu.gamestream.RESET_HOST_IDENTITY"
         const val ACTION_STOP = "com.apsu.gamestream.STOP"
         private const val MAX_RECENT_LOGS = 80
+        private const val IDR_HEARTBEAT_MS = 1_000L
         private val logLock = Any()
         private val timestampFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
         private val recentLogLines = mutableListOf<String>()

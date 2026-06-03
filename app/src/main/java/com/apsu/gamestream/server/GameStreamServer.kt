@@ -1,6 +1,7 @@
 package com.apsu.gamestream.server
 
 import android.content.Context
+import android.media.MediaCodec
 import android.os.SystemClock
 import com.apsu.gamestream.crypto.ServerIdentity
 import com.apsu.gamestream.encoder.EncodedFrame
@@ -189,7 +190,10 @@ class GameStreamServer(
     fun onEncodedFrame(frame: EncodedFrame) {
         val count = frameCount.incrementAndGet()
         videoTransport?.sendFrame(frame)
-        if (count == 1L || count % 300L == 0L) {
+        val keyFrame = (frame.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+        if (keyFrame) {
+            onLog("Encoded keyframe $count, ${frame.bytes.size} bytes")
+        } else if (count == 1L || count % 300L == 0L) {
             onLog("Encoded frame $count, ${frame.bytes.size} bytes, flags=${frame.flags}")
         }
     }
