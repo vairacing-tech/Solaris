@@ -15,6 +15,7 @@ import kotlin.math.min
 class VideoRtpTransport(
     private val port: Int,
     private val includeFrameHeader: Boolean,
+    private val onPeerReady: () -> Unit,
     private val onLog: (String) -> Unit,
 ) {
     private val running = AtomicBoolean(false)
@@ -47,6 +48,7 @@ class VideoRtpTransport(
                 if (peer != nextPeer) {
                     peer = nextPeer
                     onLog("Video UDP peer ${nextPeer.address.hostAddress}:${nextPeer.port}")
+                    onPeerReady()
                 }
             }
         }

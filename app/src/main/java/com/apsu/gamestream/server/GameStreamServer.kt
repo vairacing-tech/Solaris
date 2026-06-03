@@ -45,6 +45,10 @@ class GameStreamServer(
         videoTransport = VideoRtpTransport(
             port = Ports.VIDEO,
             includeFrameHeader = GameStreamProtocol.INCLUDE_VIDEO_FRAME_HEADER,
+            onPeerReady = {
+                onLog("Video UDP peer ready; requesting IDR frame")
+                onIdrRequested()
+            },
             onLog = onLog,
         ).also { it.start() }
         audioPingSink = AudioPingSink(
@@ -93,7 +97,8 @@ class GameStreamServer(
             activeVideoMime = { activeMime },
             onVideoPacketSize = { size -> videoTransport?.setPacketSize(size) },
             onPlay = {
-                onLog("RTSP PLAY received; waiting for video UDP ping on ${Ports.VIDEO}")
+                onLog("RTSP PLAY received; requesting IDR and waiting for video UDP ping on ${Ports.VIDEO}")
+                onIdrRequested()
             },
             onLog = onLog,
         ).also { it.start() }

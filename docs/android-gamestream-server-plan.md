@@ -51,6 +51,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - `KEY_MAX_B_FRAMES = 0` en Android Q+
   - GOP corto de 1 segundo
   - IDR inicial y respuesta a peticiones IDR de cliente
+  - deteccion de IDR por NAL H.264/HEVC, no solo por `MediaCodec.BufferInfo.flags`, para reinyectar SPS/PPS/VPS aunque encoders Qualcomm no marquen keyframe
 - Protocolo GameStream MVP:
   - NVHTTP en TCP `47989`
   - HTTPS en TCP `47984`
@@ -99,6 +100,7 @@ La razon es practica. Con `appversion 7.1.431.0`, Moonlight usa control stream E
 
 Esto deja un APK mas testeable ahora. El soporte de encoder HEVC sigue existiendo y se anuncia en SDP con el marcador que Moonlight usa para detectar H.265, pero la ruta que primero debe validarse manualmente es H.264 1080p60.
 Si un cliente muestra `conexion lenta al PC`, la primera prueba debe volver a H.264 1080p60 16 Mbps con audio desactivado; los logs `Sent video frame...` confirman que el host esta enviando UDP al peer.
+Si la imagen se congela pero el servicio sigue en foreground y los logs siguen mostrando `Encoded frame`/`Sent video frame`, no es un problema de app en segundo plano: normalmente indica que el cliente perdio referencia y necesita un IDR valido con SPS/PPS/VPS.
 
 ## Flujo de uso
 

@@ -97,12 +97,18 @@ class EncoderSession(
                         codecConfig = normalizeAnnexB(bytes)
                         return
                     }
-                    val frameBytes = prepareFrameBytes(bytes, info.flags)
+                    val normalized = normalizeAnnexB(bytes)
+                    val frameFlags = if (isKeyFrame(info.flags, normalized)) {
+                        info.flags or MediaCodec.BUFFER_FLAG_KEY_FRAME
+                    } else {
+                        info.flags
+                    }
+                    val frameBytes = prepareFrameBytes(normalized, frameFlags)
                     onFrame(
                         EncodedFrame(
                             bytes = frameBytes,
                             presentationTimeUs = info.presentationTimeUs,
-                            flags = info.flags,
+                            flags = frameFlags,
                         ),
                     )
                 }
@@ -122,8 +128,7 @@ class EncoderSession(
         }
     }
 
-    private fun prepareFrameBytes(bytes: ByteArray, flags: Int): ByteArray {
-        val normalized = normalizeAnnexB(bytes)
+    private fun prepareFrameBytes(normalized: ByteArray, flags: Int): ByteArray {
         if ((flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) == 0 || codecConfig.isEmpty()) {
             return normalized
         }
@@ -132,6 +137,10 @@ class EncoderSession(
         }
         return codecConfig + normalized
     }
+
+    private fun isKeyFrame(flags: Int, annexBBytes: ByteArray): Boolean =
+        (flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0 ||
+            NalUnitInspector.containsIdrNal(annexBBytes, encoderInfo.mime)
 
     private fun codecConfigFromFormat(format: MediaFormat): ByteArray {
         val keys = buildList {
@@ -179,14 +188,7 @@ class EncoderSession(
     }
 
     private fun ByteArray.hasAnnexBStartCode(): Boolean {
-        if (size < 4) return false
-        for (i in 0 until size - 3) {
-            if (this[i] == 0.toByte() && this[i + 1] == 0.toByte()) {
-                if (this[i + 2] == 1.toByte()) return true
-                if (i + 3 < size && this[i + 2] == 0.toByte() && this[i + 3] == 1.toByte()) return true
-            }
-        }
-        return false
+        return findStartCodeOffset(0) >= 0
     }
 
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
@@ -195,5 +197,20 @@ class EncoderSession(
             if (this[i] != prefix[i]) return false
         }
         return true
+    }
+
+    private fun ByteArray.findStartCodeOffset(fromIndex: Int): Int {
+        if (size < 3) return -1
+        var index = fromIndex.coerceAtLeast(0)
+        while (index <= size - 3) {
+            if (this[index] == 0.toByte() && this[index + 1] == 0.toByte()) {
+                if (this[index + 2] == 1.toByte()) return index
+                if (index <= size - 4 && this[index + 2] == 0.toByte() && this[index + 3] == 1.toByte()) {
+                    return index
+                }
+            }
+            index++
+        }
+        return -1
     }
 }
