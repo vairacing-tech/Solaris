@@ -29,6 +29,7 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import com.apsu.gamestream.audio.OpusEncoderSession
 import com.apsu.gamestream.encoder.EncoderSelector
 import com.apsu.gamestream.model.CodecPreference
 import com.apsu.gamestream.model.ResolutionPreset
@@ -180,7 +181,7 @@ class MainActivity : Activity() {
             text = "Audio capture"
             textSize = 15f
             setTextColor(COLOR_TEXT)
-            isChecked = streamPrefs.getBoolean(PREF_AUDIO_ENABLED, false)
+            isChecked = streamPrefs.getBoolean(PREF_AUDIO_ENABLED, true)
             setPadding(0, dp(10), 0, dp(2))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 thumbTintList = ColorStateList.valueOf(COLOR_ACCENT)
@@ -457,7 +458,7 @@ class MainActivity : Activity() {
 
         val editor = streamPrefs.edit()
             .putInt(PREF_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
-            .putBoolean(PREF_AUDIO_ENABLED, false)
+            .putBoolean(PREF_AUDIO_ENABLED, true)
         if (version < 4) {
             editor
                 .putInt(PREF_CODEC_INDEX, CodecPreference.H264.ordinal)
@@ -483,13 +484,23 @@ class MainActivity : Activity() {
         }
         encoderText.text = result.fold(
             onSuccess = {
-                "Fallback hardware encoder: ${it.codecName}\nVendor: ${it.vendor}, CBR=${it.cbrSupported}, lowLatency=${it.lowLatencyFeature}"
+                "Fallback hardware encoder: ${it.codecName}\n" +
+                    "Vendor: ${it.vendor}, CBR=${it.cbrSupported}, lowLatency=${it.lowLatencyFeature}\n" +
+                    audioEncoderSummary()
             },
             onFailure = {
-                "No compatible fallback hardware encoder for ${config.codecPreference.name} ${config.resolutionLabel} ${config.fps}fps at ${config.bitrate / 1_000_000} Mbps.\n${it.message}"
+                "No compatible fallback hardware encoder for ${config.codecPreference.name} ${config.resolutionLabel} ${config.fps}fps at ${config.bitrate / 1_000_000} Mbps.\n" +
+                    "${it.message}\n" +
+                    audioEncoderSummary()
             },
         )
     }
+
+    private fun audioEncoderSummary(): String =
+        runCatching { OpusEncoderSession.selectOpusEncoder().name }.fold(
+            onSuccess = { "Opus audio encoder: $it" },
+            onFailure = { "No Opus audio encoder: ${it.message}" },
+        )
 
     private fun connectionSummary(): String {
         val ips = localIpv4Addresses().ifEmpty { listOf("IP unavailable") }
@@ -584,7 +595,7 @@ class MainActivity : Activity() {
         private const val PREF_BITRATE_MBPS = "bitrate_mbps"
         private const val PREF_AUDIO_ENABLED = "audio_enabled"
         private const val PREF_SETTINGS_VERSION = "settings_version"
-        private const val CURRENT_SETTINGS_VERSION = 4
+        private const val CURRENT_SETTINGS_VERSION = 5
         private val FPS_OPTIONS = listOf(30, 45, 60, 90, 120)
 
         private const val COLOR_BLACK = 0xFF000000.toInt()

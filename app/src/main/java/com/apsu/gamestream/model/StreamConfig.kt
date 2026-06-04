@@ -6,7 +6,7 @@ data class StreamConfig(
     val height: Int = 1080,
     val fps: Int = 60,
     val bitrate: Int = 16_000_000,
-    val audioEnabled: Boolean = false,
+    val audioEnabled: Boolean = true,
     val lowLatency: Boolean = true,
     val iFrameIntervalSeconds: Int = 1,
 ) {

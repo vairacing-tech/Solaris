@@ -44,7 +44,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - fallback resolucion: 720p, 1080p, 1440p
   - fallback FPS: 30, 45, 60, 90, 120
   - fallback bitrate manual en Mbps
-  - audio capture on/off, desactivado por defecto hasta implementar RTP audio real
+  - audio capture on/off, activado por defecto desde la version con RTP Opus
   - persistencia local de codec, resolucion, FPS, bitrate y audio
   - migracion de ajustes antiguos HEVC/bitrate alto hacia H.264 1080p60 16 Mbps como perfil de compatibilidad inicial
   - logs recientes visibles dentro de la app
@@ -65,7 +65,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - HTTPS en TCP `47984`
   - RTSP en TCP `48010`
   - Video RTP en UDP `47998`
-  - Audio ping sink en UDP `48000`
+  - Audio RTP Opus en UDP `48000`
   - Control legacy en TCP `47995`
   - Input legacy sink en TCP `35043`
   - anuncio mDNS `_nvstream._tcp` en el puerto `47989`
@@ -93,6 +93,13 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - convierte NAL length-prefixed a Annex B cuando hace falta
   - prepende SPS/PPS/VPS a keyframes desde `csd-*`
   - H.264 y HEVC usan Annex B para Moonlight
+- Audio RTP:
+  - captura PCM stereo 48 kHz con `AudioPlaybackCaptureConfiguration`
+  - codifica Opus con `MediaCodec` `audio/opus`
+  - usa bloques de 5 ms para coincidir con clientes legacy GameStream generation 4
+  - envia RTP payload type 97 sin cifrado ni FEC
+  - mantiene cola corta de PCM y descarta audio viejo antes de acumular latencia
+  - detecta peer de audio a partir del ping UDP del cliente en `48000`
 
 ## Perfil de compatibilidad elegido
 
@@ -118,19 +125,21 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 1. Instalar `app-debug.apk`.
 2. Abrir Apsu GameStream en el Android servidor.
 3. Dejar `Fallback codec` en Auto o elegir H.264 para una primera prueba conservadora.
-4. Pulsar `Start host`.
-5. Aceptar el permiso de captura de pantalla.
-6. En Moonlight/Artemis, agregar el host usando la IP mostrada en la app.
-7. En Artemis/Moonlight, iniciar pairing y leer el PIN de 4 digitos que muestra el cliente.
-8. En Apsu, escribir ese PIN en `Pairing PIN shown by Artemis/Moonlight` y pulsar `Use pairing PIN`.
-9. Confirmar el pairing en Artemis/Moonlight y lanzar `Android Screen`.
-10. Elegir resolucion, FPS, bitrate y codec desde Moonlight/Artemis; el host validara esa peticion contra `MediaCodecList` antes de arrancar captura.
+4. Dejar `Audio capture` activo si se quiere probar audio; desactivarlo solo para aislar problemas de video o permisos.
+5. Pulsar `Start host`.
+6. Aceptar el permiso de captura de pantalla.
+7. En Moonlight/Artemis, agregar el host usando la IP mostrada en la app.
+8. En Artemis/Moonlight, iniciar pairing y leer el PIN de 4 digitos que muestra el cliente.
+9. En Apsu, escribir ese PIN en `Pairing PIN shown by Artemis/Moonlight` y pulsar `Use pairing PIN`.
+10. Confirmar el pairing en Artemis/Moonlight y lanzar `Android Screen`.
+11. Elegir resolucion, FPS, bitrate y codec desde Moonlight/Artemis; el host validara esa peticion contra `MediaCodecList` antes de arrancar captura.
 
 ## Limitaciones reales del APK actual
 
 - Validado en Odin 2 Portal por ADB para arranque de servicio, puertos NVHTTP/RTSP/RTP y encoder Qualcomm H.264.
 - El control/input remoto se acepta para que Moonlight no falle, pero se ignora; no inyecta tactil, mando, teclado ni raton en Android.
-- Audio de red no esta implementado. La app puede capturar PCM local con `AudioPlaybackCaptureConfiguration`, pero aun no codifica Opus ni envia RTP audio. Si Android niega o bloquea la captura de audio, el video continua.
+- Audio de red implementado como Opus/RTP stereo 48 kHz sin FEC ni cifrado. Si Android niega la captura, si la app origen bloquea `AudioPlaybackCapture`, o si el dispositivo no expone encoder `audio/opus`, el video continua y la app registra `Audio capture disabled` o `Audio encoding disabled`.
+- Audio surround, FEC de audio y cifrado AES-CBC de audio no estan implementados.
 - No hay FEC ni retransmision avanzada en video.
 - No hay RTSP cifrado ni control stream ENet moderno.
 - La compatibilidad HEVC con Moonlight debe probarse en dispositivo real; el encoder hardware y el SDP estan implementados, pero el primer objetivo de interoperabilidad es H.264.
@@ -139,7 +148,7 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 ## Pendiente por implementar
 
 - Completar interoperabilidad estable con Artemis/Moonlight: pairing, lista de apps, launch, RTSP y primer frame sin workarounds manuales.
-- Audio de red real: codificar Opus y enviar RTP audio en vez de solo mantener abierto el puerto/ping.
+- Mejorar audio: FEC de audio, cifrado opcional, estadisticas de paquetes y selector de bitrate.
 - Input remoto: traducir mando, teclado, raton y tactil del cliente a eventos Android cuando sea viable sin root.
 - Control stream moderno: implementar ENet/AES-GCM para perfiles GameStream recientes en vez de depender del perfil legacy TCP.
 - FEC/retransmision y control de congestion para video RTP.
@@ -163,7 +172,9 @@ flowchart LR
   ENC --> RTP["VideoRtpTransport UDP 47998"]
   SVC --> CTRL["LegacyControlTcpServer 47995"]
   SVC --> IN["TcpInputSinkServer 35043"]
-  SVC --> AUD["AudioPingSink 48000"]
+  SVC --> ACAP["AudioCaptureSession"]
+  ACAP --> OPUS["OpusEncoderSession"]
+  OPUS --> AUD["AudioRtpTransport 48000"]
 ```
 
 ## Clases principales
@@ -179,7 +190,9 @@ flowchart LR
 - `VideoRtpTransport.kt`: RTP/NV video packetization.
 - `LegacyControlTcpServer.kt`: ACK simple a paquetes de control generation 3/4 e IDR request.
 - `TcpInputSinkServer.kt`: acepta y drena input legacy.
-- `AudioPingSink.kt`: recibe pings UDP de audio para evitar errores de puerto cerrado.
+- `AudioCaptureSession.kt`: captura PCM stereo 48 kHz con `AudioPlaybackCaptureConfiguration`.
+- `OpusEncoderSession.kt`: codifica PCM a Opus 5 ms con `MediaCodec`.
+- `AudioRtpTransport.kt`: recibe pings UDP de audio y envia RTP payload type 97.
 - `PairingProtocol.kt`: pairing GameStream SHA-1/SHA-256.
 - `ServerIdentity.kt`: identidad TLS/certificado de servidor.
 
@@ -194,6 +207,8 @@ flowchart LR
   - Pairing desde Moonlight.
   - Launch de `Android Screen`.
   - Confirmar primer frame antes de 10 segundos.
+  - Confirmar en logs `Audio UDP peer`, `Opus audio encoder` y `Sent audio packet`.
+  - Reproducir audio en una app Android que permita `AudioPlaybackCapture`.
 - Prueba HEVC:
   - HEVC 1080p60 configurado desde Moonlight/Artemis si `Check fallback encoder` acepta HEVC o el host esta en Auto con HEVC disponible.
   - Verificar que Moonlight negocia H.265 y recibe IDR con VPS/SPS/PPS.

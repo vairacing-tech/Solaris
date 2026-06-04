@@ -4,8 +4,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -19,6 +21,7 @@ import android.os.PowerManager
 import android.util.Log
 import com.apsu.gamestream.R
 import com.apsu.gamestream.audio.AudioCaptureSession
+import com.apsu.gamestream.audio.OpusEncoderSession
 import com.apsu.gamestream.crypto.ServerIdentity
 import com.apsu.gamestream.encoder.EncoderSelector
 import com.apsu.gamestream.encoder.EncoderSession
@@ -38,6 +41,7 @@ class ProjectionStreamService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var encoderSession: EncoderSession? = null
     private var audioCaptureSession: AudioCaptureSession? = null
+    private var opusEncoderSession: OpusEncoderSession? = null
     private var gameStreamServer: GameStreamServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var fallbackConfig: StreamConfig = StreamConfig()
@@ -200,18 +204,7 @@ class ProjectionStreamService : Service() {
             )
 
             if (config.audioEnabled) {
-                val audioSession = AudioCaptureSession(
-                    projection = activeProjection,
-                    onPcm = { pcm, _ -> if (pcm.isNotEmpty()) Unit },
-                    onError = { throwable -> log("Audio capture disabled: ${throwable.message}") },
-                )
-                audioCaptureSession = audioSession
-                runCatching { audioSession.start() }
-                    .onFailure { throwable ->
-                        log("Audio capture disabled: ${throwable.message}")
-                        audioSession.stop()
-                        audioCaptureSession = null
-                    }
+                startAudioPipeline(activeProjection, server)
             }
 
             activeStreamConfig = config
@@ -234,14 +227,59 @@ class ProjectionStreamService : Service() {
     @Synchronized
     private fun stopCapturePipeline() {
         stopIdrHeartbeat()
-        audioCaptureSession?.stop()
-        audioCaptureSession = null
+        stopAudioPipeline()
         runCatching { virtualDisplay?.release() }
         virtualDisplay = null
         encoderSession?.stop()
         encoderSession = null
         activeStreamConfig = null
         activeEncoderMime = null
+    }
+
+    private fun startAudioPipeline(activeProjection: MediaProjection, server: GameStreamServer) {
+        val opusEncoder = OpusEncoderSession(
+            onPacket = { packet, durationMillis ->
+                server.onOpusAudioPacket(packet, durationMillis)
+            },
+            onLog = { message -> log(message) },
+            onError = { throwable ->
+                log("Audio encoding disabled: ${throwable.message}")
+                stopAudioPipeline()
+            },
+        )
+        runCatching { opusEncoder.start() }
+            .onFailure { throwable ->
+                log("Audio encoding disabled: ${throwable.message}")
+                opusEncoder.stop()
+                return
+            }
+        opusEncoderSession = opusEncoder
+
+        val audioSession = AudioCaptureSession(
+            projection = activeProjection,
+            onPcm = { pcm, _ -> opusEncoderSession?.queuePcm(pcm) },
+            onError = { throwable ->
+                log("Audio capture disabled: ${throwable.message}")
+                stopAudioPipeline()
+            },
+        )
+        audioCaptureSession = audioSession
+        runCatching { audioSession.start() }
+            .onFailure { throwable ->
+                log("Audio capture disabled: ${throwable.message}")
+                audioSession.stop()
+                audioCaptureSession = null
+                opusEncoderSession?.stop()
+                opusEncoderSession = null
+            }
+    }
+
+    @Synchronized
+    private fun stopAudioPipeline() {
+        audioCaptureSession?.stop()
+        audioCaptureSession = null
+        opusEncoderSession?.stop()
+        opusEncoderSession = null
     }
 
     private fun startIdrHeartbeat() {
@@ -308,12 +346,28 @@ class ProjectionStreamService : Service() {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                foregroundServiceType(),
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
     }
+
+    private fun foregroundServiceType(): Int {
+        var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            (fallbackConfig.audioEnabled || activeStreamConfig?.audioEnabled == true) &&
+            hasRecordAudioPermission()
+        ) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
+        return type
+    }
+
+    private fun hasRecordAudioPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     private fun notification(text: String): Notification {
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

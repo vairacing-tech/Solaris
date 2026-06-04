@@ -25,7 +25,7 @@ class GameStreamServer(
     private val pairingStore = PairingStore(context.applicationContext)
     private val frameCount = AtomicLong()
     private var videoTransport: VideoRtpTransport? = null
-    private var audioPingSink: AudioPingSink? = null
+    private var audioTransport: AudioRtpTransport? = null
     private var legacyControlServer: LegacyControlTcpServer? = null
     private var inputSinkServer: TcpInputSinkServer? = null
     private var mdnsAdvertiser: MdnsAdvertiser? = null
@@ -58,7 +58,7 @@ class GameStreamServer(
             },
             onLog = onLog,
         ).also { it.start() }
-        audioPingSink = AudioPingSink(
+        audioTransport = AudioRtpTransport(
             port = Ports.AUDIO,
             onLog = onLog,
         ).also { it.start() }
@@ -174,8 +174,8 @@ class GameStreamServer(
         inputSinkServer = null
         legacyControlServer?.stop()
         legacyControlServer = null
-        audioPingSink?.stop()
-        audioPingSink = null
+        audioTransport?.stop()
+        audioTransport = null
         videoTransport?.stop()
         videoTransport = null
         onLog("GameStream control servers stopped")
@@ -197,6 +197,10 @@ class GameStreamServer(
         } else if (count == 1L || count % 300L == 0L) {
             onLog("Encoded frame $count, ${frame.bytes.size} bytes, flags=${frame.flags}")
         }
+    }
+
+    fun onOpusAudioPacket(packet: ByteArray, durationMillis: Int) {
+        audioTransport?.sendOpusPacket(packet, durationMillis)
     }
 
     companion object {
