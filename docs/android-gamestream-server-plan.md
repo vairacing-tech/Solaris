@@ -88,6 +88,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - recibe ping UDP del cliente y fija peer
   - empaqueta frames `EncodedFrame` como RTP/NV video packets
   - mantiene separados el RTP sequence de 16 bits y `NV_VIDEO_PACKET.streamPacketIndex` de 24 bits; el segundo debe sobrevivir al wrap de 65k paquetes para evitar congelados alrededor de un minuto
+  - genera RTP timestamps desde `frameIndex` y FPS negociado, no desde PTS del encoder, para evitar irregularidades de `MediaCodec` con frames repetidos
   - lee `x-nv-video[0].packetSize` del `ANNOUNCE` RTSP y adapta el payload a 1024/1392 segun cliente
   - convierte NAL length-prefixed a Annex B cuando hace falta
   - prepende SPS/PPS/VPS a keyframes desde `csd-*`

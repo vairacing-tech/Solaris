@@ -132,6 +132,7 @@ class GameStreamServer(
             onLog("$source stream config rejected: ${config.resolutionLabel} ${config.fps}fps ${config.bitrate / 1_000_000} Mbps ${config.codecPreference.name}")
             return false
         }
+        videoTransport?.setFrameRate(config.fps)
         activeConfig = config
         activeVideoMime = mime
         onLog("$source stream config accepted: ${config.resolutionLabel} ${config.fps}fps ${config.bitrate / 1_000_000} Mbps ${mimeLabel(mime)}")

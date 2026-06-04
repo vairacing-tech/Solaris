@@ -27,6 +27,7 @@ class VideoRtpTransport(
     private var frameIndex = 1
     private var sentFrames = 0L
     @Volatile private var packetSize = DEFAULT_GAMESTREAM_PACKET_SIZE
+    @Volatile private var frameRate = DEFAULT_FRAME_RATE
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -79,6 +80,14 @@ class VideoRtpTransport(
         }
     }
 
+    fun setFrameRate(fps: Int) {
+        val nextFrameRate = fps.coerceIn(1, 240)
+        if (frameRate != nextFrameRate) {
+            frameRate = nextFrameRate
+            onLog("Video RTP timestamp rate set for ${nextFrameRate}fps")
+        }
+    }
+
     fun sendFrame(frame: EncodedFrame) {
         val activeSocket = socket ?: return
         val activePeer = peer ?: return
@@ -94,7 +103,7 @@ class VideoRtpTransport(
         }
 
         val currentFrame = frameIndex++
-        val timestamp = ((frame.presentationTimeUs * 90L) / 1000L).toInt()
+        val timestamp = RtpTimestamp.forFrame(currentFrame, frameRate)
         var offset = 0
         for (packetIndex in 0 until dataPackets) {
             val chunkLength = min(payloadUnitSize, payload.size - offset)
@@ -195,6 +204,7 @@ class VideoRtpTransport(
         private const val FRAME_HEADER_SIZE = 8
         private const val SENT_FRAME_LOG_INTERVAL = 300L
         private const val STREAM_PACKET_INDEX_MASK = 0x00FF_FFFF
+        private const val DEFAULT_FRAME_RATE = 60
 
         private const val FLAG_CONTAINS_PIC_DATA = 0x01
         private const val FLAG_EOF = 0x02
@@ -207,4 +217,9 @@ internal object NvVideoPacketHeader {
 
     fun encodeStreamPacketIndex(index: Int): Int =
         (index and STREAM_PACKET_INDEX_MASK) shl 8
+}
+
+internal object RtpTimestamp {
+    fun forFrame(frameIndex: Int, fps: Int): Int =
+        (((frameIndex - 1).coerceAtLeast(0).toLong() * 90_000L) / fps.coerceAtLeast(1)).toInt()
 }
