@@ -51,6 +51,11 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - mantenimiento: limpiar pairings y regenerar identidad/certificado del host
   - estado de cliente activo detectado por actividad NVHTTP/RTSP/RTP/control
   - notificacion foreground con accion `Stop server` mientras el host esta activo
+  - Quick Settings Tile:
+    - Android 13+ puede pedir al sistema anadir el tile desde la app con `requestAddTileService`
+    - al pulsar con el host parado o en error, abre Solaris y lanza el flujo normal de permiso `MediaProjection`
+    - al pulsar con el host activo, envia `Stop server` directamente a `ProjectionStreamService`
+    - Android 14+ usa `startActivityAndCollapse(PendingIntent)` para cumplir las restricciones modernas de inicio de actividad
 - Baja latencia:
   - `COLOR_FormatSurface`
   - CBR si el encoder lo soporta

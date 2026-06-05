@@ -3,11 +3,14 @@ package com.apsu.gamestream
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.StatusBarManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.Icon
 import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -41,6 +44,7 @@ import com.apsu.gamestream.server.ClientConnectionState
 import com.apsu.gamestream.server.GameStreamProtocol
 import com.apsu.gamestream.server.Ports
 import com.apsu.gamestream.service.ProjectionStreamService
+import com.apsu.gamestream.service.SolarisTileService
 import java.net.NetworkInterface
 
 class MainActivity : Activity() {
@@ -62,6 +66,8 @@ class MainActivity : Activity() {
     private lateinit var audioSwitch: Switch
     private lateinit var startHostButton: Button
     private lateinit var stopHostButton: Button
+    private var runtimePermissionRequestActive = false
+    private var startFromTilePending = false
 
     private val statusPoll = object : Runnable {
         override fun run() {
@@ -81,6 +87,13 @@ class MainActivity : Activity() {
         setContentView(buildContent())
         refreshEncoderPreview()
         handler.post(statusPoll)
+        handleStartFromTileIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleStartFromTileIntent(intent)
     }
 
     override fun onDestroy() {
@@ -233,6 +246,11 @@ class MainActivity : Activity() {
 
         val maintenanceSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                addView(actionButton("Add Quick Settings tile", ButtonTone.SECONDARY).apply {
+                    setOnClickListener { requestAddQuickSettingsTile() }
+                })
+            }
             addView(actionButton("Clear pairings", ButtonTone.SECONDARY).apply {
                 setOnClickListener {
                     startService(ProjectionStreamService.clearPairingsIntent(this@MainActivity))
@@ -488,6 +506,53 @@ class MainActivity : Activity() {
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
     }
 
+    private fun handleStartFromTileIntent(intent: Intent?) {
+        if (intent?.action != SolarisTileService.ACTION_START_FROM_TILE) return
+        startFromTilePending = true
+        handler.post { consumePendingTileStart() }
+    }
+
+    private fun consumePendingTileStart() {
+        if (!startFromTilePending || runtimePermissionRequestActive) return
+        startFromTilePending = false
+        if (ProjectionStreamService.currentState == ServerState.WAITING_FOR_PROJECTION ||
+            ProjectionStreamService.currentState == ServerState.READY ||
+            ProjectionStreamService.currentState == ServerState.STREAMING
+        ) {
+            updateStatusUi()
+            return
+        }
+        requestProjectionAndStart()
+    }
+
+    private fun requestAddQuickSettingsTile() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Toast.makeText(this, "Add Solaris from Android Quick Settings edit mode", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val statusBarManager = getSystemService(StatusBarManager::class.java)
+        if (statusBarManager == null) {
+            Toast.makeText(this, "Quick Settings tile request is unavailable", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        statusBarManager.requestAddTileService(
+            ComponentName(this, SolarisTileService::class.java),
+            getString(R.string.app_name),
+            Icon.createWithResource(this, R.drawable.ic_qs_solaris),
+            mainExecutor,
+        ) { result ->
+            val message = when (result) {
+                StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> "Quick Settings tile added"
+                StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> "Quick Settings tile already added"
+                StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED -> "Quick Settings tile not added"
+                else -> "Quick Settings tile request finished"
+            }
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun applyPairingPinFromInput() {
         val pin = pairingPinInput.text.toString().trim()
         if (!ProjectionStreamService.setPendingPairingPin(pin)) {
@@ -652,8 +717,20 @@ class MainActivity : Activity() {
             checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
         if (permissions.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runtimePermissionRequestActive = true
             requestPermissions(permissions, REQUEST_RUNTIME_PERMISSIONS)
         }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_RUNTIME_PERMISSIONS) return
+        runtimePermissionRequestActive = false
+        handler.post { consumePendingTileStart() }
     }
 
     private fun styleSystemBars(window: Window) {

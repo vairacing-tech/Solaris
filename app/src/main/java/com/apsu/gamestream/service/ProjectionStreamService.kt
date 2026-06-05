@@ -455,6 +455,7 @@ class ProjectionStreamService : Service() {
         lastMessage = message
         Log.i(TAG, "$state: $message")
         recordLog("$state: $message")
+        SolarisTileService.requestTileRefresh(applicationContext)
     }
 
     companion object {
