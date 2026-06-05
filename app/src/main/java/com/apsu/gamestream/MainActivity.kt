@@ -497,10 +497,7 @@ class MainActivity : Activity() {
     }
 
     private fun audioEncoderSummary(): String =
-        runCatching { OpusEncoderSession.selectOpusEncoder().name }.fold(
-            onSuccess = { "Opus audio encoder: $it" },
-            onFailure = { "No Opus audio encoder: ${it.message}" },
-        )
+        "Opus audio encoder: ${OpusEncoderSession.encoderDescription()}"
 
     private fun connectionSummary(): String {
         val ips = localIpv4Addresses().ifEmpty { listOf("IP unavailable") }

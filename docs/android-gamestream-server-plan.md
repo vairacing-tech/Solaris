@@ -95,11 +95,12 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - H.264 y HEVC usan Annex B para Moonlight
 - Audio RTP:
   - captura PCM stereo 48 kHz con `AudioPlaybackCaptureConfiguration`
-  - codifica Opus con `MediaCodec` `audio/opus`
+  - codifica Opus con Concentus Java puro para forzar paquetes de 5 ms compatibles con el perfil legacy de Moonlight
   - usa bloques de 5 ms para coincidir con clientes legacy GameStream generation 4
   - envia RTP payload type 97 sin cifrado ni FEC
   - mantiene cola corta de PCM y descarta audio viejo antes de acumular latencia
   - detecta peer de audio a partir del ping UDP del cliente en `48000`
+  - registra si la captura PCM permanece silenciosa; eso suele indicar que la app origen bloquea `AudioPlaybackCapture`
 
 ## Perfil de compatibilidad elegido
 
@@ -138,7 +139,7 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 
 - Validado en Odin 2 Portal por ADB para arranque de servicio, puertos NVHTTP/RTSP/RTP y encoder Qualcomm H.264.
 - El control/input remoto se acepta para que Moonlight no falle, pero se ignora; no inyecta tactil, mando, teclado ni raton en Android.
-- Audio de red implementado como Opus/RTP stereo 48 kHz sin FEC ni cifrado. Si Android niega la captura, si la app origen bloquea `AudioPlaybackCapture`, o si el dispositivo no expone encoder `audio/opus`, el video continua y la app registra `Audio capture disabled` o `Audio encoding disabled`.
+- Audio de red implementado como Opus/RTP stereo 48 kHz sin FEC ni cifrado. Si Android niega la captura o si la app origen bloquea `AudioPlaybackCapture`, el video continua y la app registra `Audio capture disabled` o `Audio capture still silent`.
 - Audio surround, FEC de audio y cifrado AES-CBC de audio no estan implementados.
 - No hay FEC ni retransmision avanzada en video.
 - No hay RTSP cifrado ni control stream ENet moderno.
@@ -191,7 +192,7 @@ flowchart LR
 - `LegacyControlTcpServer.kt`: ACK simple a paquetes de control generation 3/4 e IDR request.
 - `TcpInputSinkServer.kt`: acepta y drena input legacy.
 - `AudioCaptureSession.kt`: captura PCM stereo 48 kHz con `AudioPlaybackCaptureConfiguration`.
-- `OpusEncoderSession.kt`: codifica PCM a Opus 5 ms con `MediaCodec`.
+- `OpusEncoderSession.kt`: codifica PCM a Opus 5 ms con Concentus y registra si la captura PCM es silenciosa.
 - `AudioRtpTransport.kt`: recibe pings UDP de audio y envia RTP payload type 97.
 - `PairingProtocol.kt`: pairing GameStream SHA-1/SHA-256.
 - `ServerIdentity.kt`: identidad TLS/certificado de servidor.

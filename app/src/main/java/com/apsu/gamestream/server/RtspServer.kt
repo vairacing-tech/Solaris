@@ -179,9 +179,13 @@ class RtspServer(
             a=x-ss-general.featureFlags:0
             a=x-ss-general.encryptionSupported:0
             a=x-ss-general.encryptionRequested:0
+            a=x-nv-audio.surround.numChannels:2
+            a=x-nv-audio.surround.channelMask:3
+            a=x-nv-audio.surround.enable:0
+            a=x-nv-aqos.packetDuration:5
             m=audio ${Ports.AUDIO} RTP/AVP 97
             a=rtpmap:97 opus/48000/2
-            a=fmtp:97 minptime=10;useinbandfec=1
+            a=fmtp:97 minptime=5;maxptime=5;useinbandfec=0
             $videoCodecLines
         """.trimIndent().replace("\n", "\r\n")
     }

@@ -1,9 +1,7 @@
 package com.apsu.gamestream.audio
 
-import android.media.MediaCodec
-import android.media.MediaCodecInfo
-import android.media.MediaCodecList
-import android.media.MediaFormat
+import io.github.jaredmdobson.concentus.OpusApplication
+import io.github.jaredmdobson.concentus.OpusEncoder
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -21,31 +19,33 @@ class OpusEncoderSession(
     private val chunkLock = Any()
     private val staging = ByteArray(FRAME_BYTES)
     private var stagingOffset = 0
-    private var codec: MediaCodec? = null
+    private var encoder: OpusEncoder? = null
     private var workerThread: Thread? = null
     private var droppedFrames = 0L
+    private var capturedFrames = 0L
+    private var nonSilentFrames = 0L
+    private var loggedSilentCapture = false
+    private var loggedNonSilentCapture = false
+    private var loggedFirstPacket = false
 
-    @Volatile var codecName: String? = null
+    @Volatile var encoderName: String? = null
         private set
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
-        val codecInfo = selectOpusEncoder()
-        codecName = codecInfo.name
-
-        val mediaCodec = MediaCodec.createByCodecName(codecInfo.name)
-        val format = MediaFormat.createAudioFormat(MIME, SAMPLE_RATE, CHANNEL_COUNT).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, FRAME_BYTES)
+        val opusEncoder = OpusEncoder(SAMPLE_RATE, CHANNEL_COUNT, OpusApplication.OPUS_APPLICATION_RESTRICTED_LOWDELAY).apply {
+            setBitrate(bitrate)
+            setUseVBR(false)
+            setUseInbandFEC(false)
+            setComplexity(OPUS_COMPLEXITY)
         }
-        mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        mediaCodec.start()
-        codec = mediaCodec
+        encoder = opusEncoder
+        encoderName = ENCODER_NAME
 
         workerThread = thread(name = "apsu-opus-encoder", isDaemon = true) {
-            runEncoder(mediaCodec)
+            runEncoder(opusEncoder)
         }
-        onLog("Opus audio encoder ${codecInfo.name} started at ${bitrate / 1000} Kbps")
+        onLog("Opus audio encoder $ENCODER_NAME started at ${bitrate / 1000} Kbps, ${PACKET_DURATION_MS}ms frames")
     }
 
     fun queuePcm(pcm: ByteArray) {
@@ -74,10 +74,8 @@ class OpusEncoderSession(
             runCatching { worker?.join(1_000) }
         }
         workerThread = null
-        runCatching { codec?.stop() }
-        runCatching { codec?.release() }
-        codec = null
-        codecName = null
+        encoder = null
+        encoderName = null
         frames.clear()
         synchronized(chunkLock) {
             stagingOffset = 0
@@ -85,6 +83,7 @@ class OpusEncoderSession(
     }
 
     private fun offerFrame(frame: ByteArray) {
+        observePcmFrame(frame)
         if (frames.offer(frame)) return
         frames.poll()
         if (frames.offer(frame)) {
@@ -95,74 +94,49 @@ class OpusEncoderSession(
         }
     }
 
-    private fun runEncoder(mediaCodec: MediaCodec) {
-        val bufferInfo = MediaCodec.BufferInfo()
-        var nextPresentationTimeUs = 0L
+    private fun observePcmFrame(frame: ByteArray) {
+        capturedFrames++
+        val peak = pcmPeak(frame)
+        if (peak > PCM_NON_SILENT_PEAK) {
+            nonSilentFrames++
+            if (!loggedNonSilentCapture) {
+                loggedNonSilentCapture = true
+                onLog("Audio capture has non-silent PCM, peak=$peak")
+            }
+        } else if (!loggedSilentCapture && capturedFrames >= SILENT_CAPTURE_LOG_FRAME_COUNT) {
+            loggedSilentCapture = true
+            onLog("Audio capture still silent after ${SILENT_CAPTURE_LOG_FRAME_COUNT * PACKET_DURATION_MS}ms; source app may block playback capture")
+        }
+    }
+
+    private fun runEncoder(opusEncoder: OpusEncoder) {
+        val pcmShorts = ShortArray(FRAME_SAMPLES_PER_CHANNEL * CHANNEL_COUNT)
+        val output = ByteArray(MAX_OPUS_PACKET_BYTES)
         try {
             while (running.get() || frames.isNotEmpty()) {
                 val frame = frames.poll(10, TimeUnit.MILLISECONDS)
                 if (frame != null) {
-                    if (queueInputFrame(mediaCodec, frame, nextPresentationTimeUs)) {
-                        nextPresentationTimeUs += FRAME_DURATION_US
+                    littleEndianPcmToShorts(frame, pcmShorts)
+                    val encodedLength = opusEncoder.encode(
+                        pcmShorts,
+                        0,
+                        FRAME_SAMPLES_PER_CHANNEL,
+                        output,
+                        0,
+                        output.size,
+                    )
+                    if (encodedLength > 0) {
+                        if (!loggedFirstPacket) {
+                            loggedFirstPacket = true
+                            onLog("Encoded first ${PACKET_DURATION_MS}ms Opus packet, $encodedLength bytes")
+                        }
+                        onPacket(output.copyOf(encodedLength), PACKET_DURATION_MS)
                     }
                 }
-                drainOutput(mediaCodec, bufferInfo)
             }
-            drainOutput(mediaCodec, bufferInfo)
         } catch (t: Throwable) {
             if (running.get()) {
                 onError(t)
-            }
-        }
-    }
-
-    private fun queueInputFrame(
-        mediaCodec: MediaCodec,
-        frame: ByteArray,
-        presentationTimeUs: Long,
-    ): Boolean {
-        while (running.get()) {
-            val inputIndex = mediaCodec.dequeueInputBuffer(INPUT_TIMEOUT_US)
-            if (inputIndex < 0) {
-                drainOutput(mediaCodec, MediaCodec.BufferInfo())
-                continue
-            }
-            val inputBuffer = mediaCodec.getInputBuffer(inputIndex)
-                ?: throw IllegalStateException("Opus encoder returned null input buffer")
-            if (inputBuffer.capacity() < frame.size) {
-                throw IllegalStateException("Opus input buffer too small: ${inputBuffer.capacity()} < ${frame.size}")
-            }
-            inputBuffer.clear()
-            inputBuffer.put(frame)
-            mediaCodec.queueInputBuffer(inputIndex, 0, frame.size, presentationTimeUs, 0)
-            return true
-        }
-        return false
-    }
-
-    private fun drainOutput(mediaCodec: MediaCodec, bufferInfo: MediaCodec.BufferInfo) {
-        while (true) {
-            when (val outputIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, OUTPUT_TIMEOUT_US)) {
-                MediaCodec.INFO_TRY_AGAIN_LATER -> return
-                MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> onLog("Opus output format ${mediaCodec.outputFormat}")
-                MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> Unit
-                else -> {
-                    if (outputIndex < 0) return
-                    val outputBuffer = mediaCodec.getOutputBuffer(outputIndex)
-                    if (
-                        outputBuffer != null &&
-                        bufferInfo.size > 0 &&
-                        (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
-                    ) {
-                        outputBuffer.position(bufferInfo.offset)
-                        outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-                        val packet = ByteArray(bufferInfo.size)
-                        outputBuffer.get(packet)
-                        onPacket(packet, PACKET_DURATION_MS)
-                    }
-                    mediaCodec.releaseOutputBuffer(outputIndex, false)
-                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) return
-                }
             }
         }
     }
@@ -174,28 +148,39 @@ class OpusEncoderSession(
         const val PCM_BYTES_PER_SAMPLE = 2
         const val FRAME_SAMPLES_PER_CHANNEL = SAMPLE_RATE * PACKET_DURATION_MS / 1_000
         const val FRAME_BYTES = FRAME_SAMPLES_PER_CHANNEL * CHANNEL_COUNT * PCM_BYTES_PER_SAMPLE
-        private const val MIME = MediaFormat.MIMETYPE_AUDIO_OPUS
+        const val ENCODER_NAME = "Concentus Opus"
         private const val DEFAULT_BITRATE = 128_000
-        private const val FRAME_DURATION_US = PACKET_DURATION_MS * 1_000L
         private const val MAX_QUEUED_FRAMES = 12
-        private const val INPUT_TIMEOUT_US = 10_000L
-        private const val OUTPUT_TIMEOUT_US = 0L
+        private const val MAX_OPUS_PACKET_BYTES = 1_275
         private const val DROPPED_FRAME_LOG_INTERVAL = 100L
+        private const val OPUS_COMPLEXITY = 5
+        private const val PCM_NON_SILENT_PEAK = 128
+        private const val SILENT_CAPTURE_LOG_FRAME_COUNT = 400L
 
-        fun selectOpusEncoder(): MediaCodecInfo {
-            val encoders = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
-                .asSequence()
-                .filter { it.isEncoder }
-                .filter { codecInfo ->
-                    codecInfo.supportedTypes.any { it.equals(MIME, ignoreCase = true) }
-                }
-                .sortedWith(
-                    compareBy<MediaCodecInfo> { if (it.isSoftwareOnly) 1 else 0 }
-                        .thenBy { it.name },
-                )
-                .toList()
-            return encoders.firstOrNull()
-                ?: throw IllegalStateException("No MediaCodec Opus encoder ($MIME) available")
+        fun encoderDescription(): String = "$ENCODER_NAME ${PACKET_DURATION_MS}ms"
+
+        private fun littleEndianPcmToShorts(frame: ByteArray, output: ShortArray) {
+            var inputOffset = 0
+            for (index in output.indices) {
+                val low = frame[inputOffset].toInt() and 0xFF
+                val high = frame[inputOffset + 1].toInt()
+                output[index] = ((high shl 8) or low).toShort()
+                inputOffset += PCM_BYTES_PER_SAMPLE
+            }
+        }
+
+        private fun pcmPeak(frame: ByteArray): Int {
+            var peak = 0
+            var index = 0
+            while (index + 1 < frame.size) {
+                val low = frame[index].toInt() and 0xFF
+                val high = frame[index + 1].toInt()
+                val sample = ((high shl 8) or low).toShort().toInt()
+                val absolute = kotlin.math.abs(sample)
+                if (absolute > peak) peak = absolute
+                index += PCM_BYTES_PER_SAMPLE
+            }
+            return peak
         }
     }
 }

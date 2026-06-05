@@ -42,5 +42,6 @@ kotlin {
 }
 
 dependencies {
+    implementation("io.github.jaredmdobson:concentus:1.0.2")
     testImplementation("junit:junit:4.13.2")
 }
