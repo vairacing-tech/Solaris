@@ -2,22 +2,19 @@
 
 ## Resumen
 
-Solaris es una app Android nueva en `C:\Proyectos\apsu-android` para actuar como servidor GameStream compatible con clientes tipo Moonlight/Artemis. No es un fork directo de Apollo: Apollo/Sunshine se usan como referencia de protocolo, porque reutilizar codigo directo traeria GPLv3 y porque sus backends estan pensados para escritorio.
+Solaris es una app Android nueva para actuar como servidor GameStream compatible con clientes tipo Moonlight/Artemis. No es un fork directo de Apollo: Apollo/Sunshine se usan como referencia de protocolo, porque reutilizar codigo directo traeria GPLv3 y porque sus backends estan pensados para escritorio.
 
 El APK debug actual es instalable y arranca un servidor MVP con captura Android sin root, encoder hardware obligatorio H.264/HEVC, pairing NVHTTP, RTSP, RTP de video y un perfil de compatibilidad legacy para evitar el control stream ENet cifrado de las generaciones modernas de Moonlight.
 
-## Entorno local
+## Requisitos de desarrollo
 
-- Workspace: `C:\Proyectos\apsu-android`
-- Android Studio: `C:\Program Files\Android\Android Studio\bin`
-- Android SDK: `C:\Users\CJF\AppData\Local\Android\Sdk`
-- SDK instalado: API 35, 36 y 36.1
-- NDK instalado: `27.3.13750724`
-- CMake SDK: `3.22.1`
+- Android Studio o Android Gradle Plugin compatible con `compileSdk`/`targetSdk` 36.
+- Android SDK con API 36.
+- Android NDK `27.3.13750724`.
+- CMake SDK `3.22.1`.
 - Gradle: wrapper local del proyecto
-- APK debug: `C:\Proyectos\apsu-android\app\build\outputs\apk\debug\app-debug.apk`
-- Debug signing: Gradle usa la keystore estandar `C:\Users\CJF\.android\debug.keystore`
-- Release signing local: hay keystore en `C:\Users\CJF\.android`; no se sube al repo ni se documentan passwords
+- APK debug: `app\build\outputs\apk\debug\app-debug.apk`
+- APK release: `app\build\outputs\apk\release\app-release.apk`
 
 ## Estado implementado
 
@@ -204,9 +201,9 @@ flowchart LR
 ## Test plan
 
 - Build local:
-  - `.\gradlew.bat assembleDebug testDebugUnitTest`
+  - `.\gradlew.bat testDebugUnitTest assembleDebug assembleRelease`
 - Instalacion manual:
-  - `C:\Users\CJF\AppData\Local\Android\Sdk\platform-tools\adb.exe install -r app\build\outputs\apk\debug\app-debug.apk`
+  - `adb install -r app\build\outputs\apk\debug\app-debug.apk`
 - Prueba principal:
   - H.264 1080p60 16 Mbps configurado desde Moonlight/Artemis en Snapdragon.
   - Pairing desde Moonlight.
