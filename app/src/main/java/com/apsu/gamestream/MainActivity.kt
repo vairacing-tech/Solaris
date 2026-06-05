@@ -49,6 +49,8 @@ class MainActivity : Activity() {
         getSharedPreferences(PREF_STREAM_SETTINGS, Context.MODE_PRIVATE)
     }
     private lateinit var statusText: TextView
+    private lateinit var statusDetailText: TextView
+    private lateinit var statusPanel: LinearLayout
     private lateinit var connectionText: TextView
     private lateinit var encoderText: TextView
     private lateinit var logsText: TextView
@@ -58,6 +60,8 @@ class MainActivity : Activity() {
     private lateinit var bitrateInput: EditText
     private lateinit var pairingPinInput: EditText
     private lateinit var audioSwitch: Switch
+    private lateinit var startHostButton: Button
+    private lateinit var stopHostButton: Button
 
     private val statusPoll = object : Runnable {
         override fun run() {
@@ -102,6 +106,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildContent(): View {
+        val wideLayout = resources.configuration.screenWidthDp >= 700
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(18), dp(18), dp(24))
@@ -122,16 +127,7 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, dp(8))
         })
 
-        statusText = TextView(this).apply {
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).withBottom(dp(12))
-        }
-        root.addView(statusText)
+        root.addView(buildStatusPanel(wideLayout))
 
         connectionText = TextView(this).apply {
             text = connectionSummary()
@@ -139,7 +135,24 @@ class MainActivity : Activity() {
             setTextColor(COLOR_MUTED)
             setLineSpacing(0f, 1.12f)
         }
-        root.addView(section("HOST", connectionText))
+        val hostSection = section("HOST", connectionText)
+
+        statusText = TextView(this).apply {
+            textSize = 30f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(COLOR_TEXT)
+            letterSpacing = 0f
+        }
+        statusDetailText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(COLOR_MUTED)
+            setLineSpacing(0f, 1.12f)
+            setPadding(0, dp(6), 0, 0)
+        }
+        (statusPanel.getChildAt(0) as LinearLayout).apply {
+            addView(statusText)
+            addView(statusDetailText)
+        }
 
         pairingPinInput = EditText(this).apply {
             hint = "PIN from Artemis/Moonlight"
@@ -157,7 +170,7 @@ class MainActivity : Activity() {
                 setOnClickListener { applyPairingPinFromInput() }
             })
         }
-        root.addView(section("PAIR", pairingSection))
+        val pairingCard = section("PAIR", pairingSection)
 
         codecSpinner = spinner(CodecPreference.entries.map { it.name })
         codecSpinner.setSelection(savedIndex(PREF_CODEC_INDEX, CodecPreference.H264.ordinal, CodecPreference.entries.size))
@@ -191,13 +204,18 @@ class MainActivity : Activity() {
         }
         val streamSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(labeled("Fallback codec", codecSpinner))
-            addView(labeled("Fallback resolution", resolutionSpinner))
-            addView(labeled("Fallback FPS", fpsSpinner))
-            addView(labeled("Fallback bitrate (Mbps)", bitrateInput))
+            if (wideLayout) {
+                addView(gridRow(labeled("Fallback codec", codecSpinner), labeled("Fallback resolution", resolutionSpinner)))
+                addView(gridRow(labeled("Fallback FPS", fpsSpinner), labeled("Fallback bitrate (Mbps)", bitrateInput)))
+            } else {
+                addView(labeled("Fallback codec", codecSpinner))
+                addView(labeled("Fallback resolution", resolutionSpinner))
+                addView(labeled("Fallback FPS", fpsSpinner))
+                addView(labeled("Fallback bitrate (Mbps)", bitrateInput))
+            }
             addView(audioSwitch)
         }
-        root.addView(section("CLIENT DEFAULTS", streamSection))
+        val streamCard = section("CLIENT DEFAULTS", streamSection)
 
         encoderText = TextView(this).apply {
             textSize = 14f
@@ -211,14 +229,7 @@ class MainActivity : Activity() {
                 setOnClickListener { refreshEncoderPreview() }
             })
         }
-        root.addView(section("DIAGNOSTICS", diagnosticsSection))
-
-        root.addView(actionButton("Start host", ButtonTone.PRIMARY).apply {
-            setOnClickListener { requestProjectionAndStart() }
-        })
-        root.addView(actionButton("Stop host", ButtonTone.DANGER).apply {
-            setOnClickListener { startService(ProjectionStreamService.stopIntent(this@MainActivity)) }
-        })
+        val diagnosticsCard = section("DIAGNOSTICS", diagnosticsSection)
 
         val maintenanceSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -232,7 +243,7 @@ class MainActivity : Activity() {
                 setOnClickListener { confirmResetHostIdentity() }
             })
         }
-        root.addView(section("MAINTENANCE", maintenanceSection))
+        val maintenanceCard = section("MAINTENANCE", maintenanceSection)
 
         logsText = TextView(this).apply {
             textSize = 12f
@@ -240,7 +251,33 @@ class MainActivity : Activity() {
             setTextColor(COLOR_MUTED)
             setLineSpacing(0f, 1.12f)
         }
-        root.addView(section("LOGS", logsText))
+        val logsCard = section("LOGS", logsText)
+
+        if (wideLayout) {
+            root.addView(
+                gridRow(
+                    LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(pairingCard)
+                        addView(streamCard)
+                    },
+                    LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        addView(hostSection)
+                        addView(diagnosticsCard)
+                        addView(maintenanceCard)
+                        addView(logsCard)
+                    },
+                ),
+            )
+        } else {
+            root.addView(pairingCard)
+            root.addView(streamCard)
+            root.addView(hostSection)
+            root.addView(diagnosticsCard)
+            root.addView(maintenanceCard)
+            root.addView(logsCard)
+        }
 
         val listener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -257,6 +294,52 @@ class MainActivity : Activity() {
         return ScrollView(this).apply {
             setBackgroundColor(COLOR_BLACK)
             addView(root)
+        }
+    }
+
+    private fun buildStatusPanel(wideLayout: Boolean): LinearLayout {
+        val statusCopy = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                if (wideLayout) 0 else ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                if (wideLayout) 1f else 0f,
+            )
+        }
+        startHostButton = actionButton("Start server", ButtonTone.PRIMARY).apply {
+            minHeight = dp(56)
+            textSize = 16f
+            setOnClickListener { requestProjectionAndStart() }
+        }
+        stopHostButton = actionButton("Stop server", ButtonTone.DANGER).apply {
+            minHeight = dp(56)
+            textSize = 16f
+            visibility = View.GONE
+            setOnClickListener { startService(ProjectionStreamService.stopIntent(this@MainActivity)) }
+        }
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                if (wideLayout) dp(220) else ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                if (wideLayout) leftMargin = dp(16)
+            }
+            addView(startHostButton)
+            addView(stopHostButton)
+        }
+        return LinearLayout(this).apply {
+            statusPanel = this
+            orientation = if (wideLayout) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            gravity = if (wideLayout) Gravity.CENTER_VERTICAL else Gravity.NO_GRAVITY
+            background = rounded(COLOR_FIELD, COLOR_STROKE)
+            setPadding(dp(16), dp(14), dp(16), dp(16))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).withBottom(dp(12))
+            addView(statusCopy)
+            addView(controls)
         }
     }
 
@@ -285,6 +368,21 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, dp(8))
             addView(label(label))
             addView(child)
+        }
+
+    private fun gridRow(vararg children: View): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            children.forEachIndexed { index, child ->
+                child.layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1f,
+                ).apply {
+                    if (index > 0) leftMargin = dp(10)
+                }
+                addView(child)
+            }
         }
 
     private fun label(label: String): TextView =
@@ -353,10 +451,23 @@ class MainActivity : Activity() {
             ServerState.READY -> ButtonTone.ACCENT
             ServerState.IDLE -> ButtonTone.SECONDARY
         }
-        statusText.text = "${state.name}: ${ProjectionStreamService.lastMessage}"
+        statusText.text = stateTitle(state)
+        statusDetailText.text = ProjectionStreamService.lastMessage
         statusText.setTextColor(tone.textColor)
-        statusText.background = rounded(tone.background, tone.stroke)
+        statusPanel.background = rounded(tone.background, tone.stroke)
+        val stopped = state == ServerState.IDLE
+        startHostButton.visibility = if (stopped) View.VISIBLE else View.GONE
+        stopHostButton.visibility = if (stopped) View.GONE else View.VISIBLE
     }
+
+    private fun stateTitle(state: ServerState): String =
+        when (state) {
+            ServerState.IDLE -> "SERVER STOPPED"
+            ServerState.WAITING_FOR_PROJECTION -> "STARTING"
+            ServerState.READY -> "SERVER READY"
+            ServerState.STREAMING -> "STREAMING"
+            ServerState.ERROR -> "SERVER ERROR"
+        }
 
     private fun updateLogsUi() {
         if (!::logsText.isInitialized) return

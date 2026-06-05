@@ -3,6 +3,7 @@ package com.apsu.gamestream.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.Manifest
 import android.content.Context
@@ -381,7 +382,25 @@ class ProjectionStreamService : Service() {
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setOngoing(true)
+            .addAction(
+                Notification.Action.Builder(
+                    android.R.drawable.ic_media_pause,
+                    "Stop server",
+                    stopServicePendingIntent(),
+                ).build(),
+            )
             .build()
+    }
+
+    private fun stopServicePendingIntent(): PendingIntent {
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        return PendingIntent.getService(
+            this,
+            STOP_ACTION_REQUEST_CODE,
+            stopIntent(this),
+            flags,
+        )
     }
 
     private fun createNotificationChannel() {
@@ -442,6 +461,7 @@ class ProjectionStreamService : Service() {
         private const val TAG = "ProjectionStreamService"
         private const val CHANNEL_ID = "apsu-stream"
         private const val NOTIFICATION_ID = 42
+        private const val STOP_ACTION_REQUEST_CODE = 43
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
         private const val EXTRA_PAIRING_PIN = "pairing_pin"

@@ -40,6 +40,9 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - rechazo de `c2.android.*`, `OMX.google.*` y nombres software
   - prioridad Snapdragon/Qualcomm: `c2.qti.*`, `OMX.qcom.*`, `qti`, `qcom`, `qualcomm`
 - Controles visibles:
+  - panel superior grande con estado del servidor: parado, arrancando, listo, streaming o error
+  - boton principal situado arriba: `Start server` solo cuando el host esta parado; `Stop server` cuando el servicio esta activo
+  - layout de dos columnas en pantallas anchas para aprovechar la Odin/landscape sin obligar a hacer scroll hasta los controles principales
   - fallback codec: Auto, H.264, HEVC
   - fallback resolucion: 720p, 1080p, 1440p
   - fallback FPS: 30, 45, 60, 90, 120
@@ -50,6 +53,7 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - logs recientes visibles dentro de la app
   - mantenimiento: limpiar pairings y regenerar identidad/certificado del host
   - estado de cliente activo detectado por actividad NVHTTP/RTSP/RTP/control
+  - notificacion foreground con accion `Stop server` mientras el host esta activo
 - Baja latencia:
   - `COLOR_FormatSurface`
   - CBR si el encoder lo soporta
@@ -155,7 +159,7 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 - FEC/retransmision y control de congestion para video RTP.
 - Perfil HEVC validado extremo a extremo, incluido fallback claro a H.264 si el cliente o encoder falla.
 - Pruebas instrumentadas reales para TLS/NVHTTP/RTSP y creacion de encoder con `COLOR_FormatSurface`.
-- Pulido visual: UI OLED oscura inspirada en Moonlight, ya iniciada en `MainActivity`, con componentes propios sin AndroidX.
+- Pulido visual adicional: controles mas densos para landscape/Odin, iconografia y estados de sesion mas ricos.
 
 ## Arquitectura
 
