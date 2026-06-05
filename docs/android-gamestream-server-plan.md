@@ -1,8 +1,8 @@
-# Apsu Android GameStream Server
+# Solaris Android GameStream Server
 
 ## Resumen
 
-Apsu es una app Android nueva en `C:\Proyectos\apsu-android` para actuar como servidor GameStream compatible con clientes tipo Moonlight/Artemis. No es un fork directo de Apollo: Apollo/Sunshine se usan como referencia de protocolo, porque reutilizar codigo directo traeria GPLv3 y porque sus backends estan pensados para escritorio.
+Solaris es una app Android nueva en `C:\Proyectos\apsu-android` para actuar como servidor GameStream compatible con clientes tipo Moonlight/Artemis. No es un fork directo de Apollo: Apollo/Sunshine se usan como referencia de protocolo, porque reutilizar codigo directo traeria GPLv3 y porque sus backends estan pensados para escritorio.
 
 El APK debug actual es instalable y arranca un servidor MVP con captura Android sin root, encoder hardware obligatorio H.264/HEVC, pairing NVHTTP, RTSP, RTP de video y un perfil de compatibilidad legacy para evitar el control stream ENet cifrado de las generaciones modernas de Moonlight.
 
@@ -128,14 +128,14 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 ## Flujo de uso
 
 1. Instalar `app-debug.apk`.
-2. Abrir Apsu GameStream en el Android servidor.
+2. Abrir Solaris en el Android servidor.
 3. Dejar `Fallback codec` en Auto o elegir H.264 para una primera prueba conservadora.
 4. Dejar `Audio capture` activo si se quiere probar audio; desactivarlo solo para aislar problemas de video o permisos.
 5. Pulsar `Start host`.
 6. Aceptar el permiso de captura de pantalla.
 7. En Moonlight/Artemis, agregar el host usando la IP mostrada en la app.
 8. En Artemis/Moonlight, iniciar pairing y leer el PIN de 4 digitos que muestra el cliente.
-9. En Apsu, escribir ese PIN en `Pairing PIN shown by Artemis/Moonlight` y pulsar `Use pairing PIN`.
+9. En Solaris, escribir ese PIN en `Pairing PIN shown by Artemis/Moonlight` y pulsar `Use pairing PIN`.
 10. Confirmar el pairing en Artemis/Moonlight y lanzar `Android Screen`.
 11. Elegir resolucion, FPS, bitrate y codec desde Moonlight/Artemis; el host validara esa peticion contra `MediaCodecList` antes de arrancar captura.
 

@@ -194,7 +194,7 @@ class ProjectionStreamService : Service() {
 
             val metrics = resources.displayMetrics
             virtualDisplay = activeProjection.createVirtualDisplay(
-                "ApsuGameStream",
+                "SolarisGameStream",
                 config.width,
                 config.height,
                 metrics.densityDpi,

@@ -134,7 +134,7 @@ class ServerIdentity private constructor(
                     KeyProperties.PURPOSE_ENCRYPT or
                     KeyProperties.PURPOSE_DECRYPT,
             )
-                .setCertificateSubject(X500Principal("CN=Apsu GameStream"))
+                .setCertificateSubject(X500Principal("CN=Solaris GameStream"))
                 .setCertificateSerialNumber(BigInteger(64, SecureRandom()).abs().plus(BigInteger.ONE))
                 .setCertificateNotBefore(now.time)
                 .setCertificateNotAfter(end.time)

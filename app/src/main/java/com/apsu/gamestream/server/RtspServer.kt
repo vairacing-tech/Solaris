@@ -79,7 +79,7 @@ class RtspServer(
         }
         val responseBody = if (method == "DESCRIBE") describeBody() else ""
         val extraHeaders = buildList {
-            add("Server: ApsuGameStream/0.1.0")
+            add("Server: SolarisGameStream/0.1.0")
             when (method) {
                 "OPTIONS" -> add("Public: OPTIONS, DESCRIBE, SETUP, ANNOUNCE, PLAY, TEARDOWN")
                 "SETUP" -> setupHeaders(target).forEach(::add)
@@ -139,7 +139,7 @@ class RtspServer(
             "Transport: unicast;server_port=$streamPort-${streamPort + 1};source=0.0.0.0",
         )
         if (target.contains("video", ignoreCase = true) || target.contains("audio", ignoreCase = true)) {
-            headers += "X-SS-Ping-Payload: ApsuStreamPing00"
+            headers += "X-SS-Ping-Payload: SolarisPing00000"
         }
         if (target.contains("control", ignoreCase = true)) {
             headers += "X-SS-Connect-Data: 305419896"
@@ -165,7 +165,7 @@ class RtspServer(
         return """
             v=0
             o=android 0 0 IN IP4 127.0.0.1
-            s=Apsu GameStream
+            s=Solaris GameStream
             t=0 0
             a=x-nv-general.serverAddress:0.0.0.0
             a=x-nv-video[0].clientViewportWd:${config.width}

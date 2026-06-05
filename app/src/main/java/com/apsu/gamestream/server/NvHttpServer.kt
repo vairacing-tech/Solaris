@@ -138,7 +138,7 @@ class NvHttpServer(
         return """
             <?xml version="1.0" encoding="utf-8"?>
             <root status_code="200">
-              <hostname>Apsu Android</hostname>
+              <hostname>Solaris Android</hostname>
               <appversion>${GameStreamProtocol.APP_VERSION}</appversion>
               <GfeVersion>${GameStreamProtocol.GFE_VERSION}</GfeVersion>
               <uniqueid>$uniqueId</uniqueid>

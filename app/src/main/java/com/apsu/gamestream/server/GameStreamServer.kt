@@ -91,7 +91,7 @@ class GameStreamServer(
         ).also { it.start() }
         mdnsAdvertiser = MdnsAdvertiser(
             context = appContext,
-            serviceName = "Apsu Android",
+            serviceName = "Solaris Android",
             port = Ports.HTTP,
             onLog = onLog,
         ).also { it.start() }

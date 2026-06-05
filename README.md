@@ -16,16 +16,18 @@ Servidor GameStream Android experimental para streaming desde un dispositivo And
 ## Build
 
 ```powershell
-.\gradlew.bat assembleDebug testDebugUnitTest
+.\gradlew.bat testDebugUnitTest assembleDebug assembleRelease
 ```
 
-APK debug:
+APKs:
 
 ```text
 app\build\outputs\apk\debug\app-debug.apk
+app\build\outputs\apk\release\app-release.apk
 ```
 
 La firma debug usa la keystore estandar local de Android: `C:\Users\CJF\.android\debug.keystore`.
+La firma release se toma de `C:\Users\CJF\.android\solaris-release-signing.txt` cuando existe. Ese archivo y la keystore release son locales y no se suben al repo.
 
 ## Documentacion
 

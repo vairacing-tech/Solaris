@@ -114,14 +114,14 @@ class MainActivity : Activity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "Apsu"
+            text = "Solaris"
             textSize = 34f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(COLOR_TEXT)
             letterSpacing = 0f
         })
         root.addView(TextView(this).apply {
-            text = "OLED GameStream host"
+            text = "OLED GameStream server"
             textSize = 14f
             setTextColor(COLOR_MUTED)
             setPadding(0, 0, 0, dp(8))
