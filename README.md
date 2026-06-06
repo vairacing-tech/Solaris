@@ -17,6 +17,7 @@ Servidor GameStream Android experimental para streaming desde un dispositivo And
 - Perfil GameStream legacy `4.1.1.0` para evitar ENet/control cifrado en esta primera version.
 - Pairing con PIN definido por Artemis/Moonlight: introduce en la app el PIN que muestra el cliente antes de confirmar el pairing.
 - Quick Settings Tile compatible con Android 13+: permite abrir Solaris para iniciar el flujo de captura y parar el servidor desde ajustes rapidos.
+- Comprobacion opcional de nuevas releases al arrancar, con timeout maximo de 10 segundos y sin bloquear la app si GitHub no responde.
 
 ## Build
 

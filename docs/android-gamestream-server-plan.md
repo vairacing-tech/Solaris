@@ -51,6 +51,11 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - mantenimiento: limpiar pairings y regenerar identidad/certificado del host
   - estado de cliente activo detectado por actividad NVHTTP/RTSP/RTP/control
   - notificacion foreground con accion `Stop server` mientras el host esta activo
+  - actualizaciones:
+    - opcion `Check updates on startup`, activada por defecto y persistente
+    - consulta no bloqueante a GitHub Releases al arrancar
+    - timeout total maximo de 10 segundos; si GitHub no responde o falla, no bloquea ni interrumpe la app
+    - si hay una release mas nueva, muestra un dialogo y abre la pagina de la ultima release con `ACTION_VIEW`
   - Quick Settings Tile:
     - Android 13+ puede pedir al sistema anadir el tile desde la app con `requestAddTileService`
     - al pulsar con el host parado o en error, abre Solaris y lanza el flujo normal de permiso `MediaProjection`

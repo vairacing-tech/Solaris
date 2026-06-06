@@ -13,6 +13,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -45,6 +46,8 @@ import com.apsu.gamestream.server.GameStreamProtocol
 import com.apsu.gamestream.server.Ports
 import com.apsu.gamestream.service.ProjectionStreamService
 import com.apsu.gamestream.service.SolarisTileService
+import com.apsu.gamestream.update.ReleaseInfo
+import com.apsu.gamestream.update.ReleaseUpdateChecker
 import java.net.NetworkInterface
 
 class MainActivity : Activity() {
@@ -64,10 +67,12 @@ class MainActivity : Activity() {
     private lateinit var bitrateInput: EditText
     private lateinit var pairingPinInput: EditText
     private lateinit var audioSwitch: Switch
+    private lateinit var updateCheckSwitch: Switch
     private lateinit var startHostButton: Button
     private lateinit var stopHostButton: Button
     private var runtimePermissionRequestActive = false
     private var startFromTilePending = false
+    private var releaseUpdateCheck: AutoCloseable? = null
 
     private val statusPoll = object : Runnable {
         override fun run() {
@@ -88,6 +93,9 @@ class MainActivity : Activity() {
         refreshEncoderPreview()
         handler.post(statusPoll)
         handleStartFromTileIntent(intent)
+        if (savedInstanceState == null) {
+            checkForReleaseUpdateOnStartup()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -97,6 +105,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        releaseUpdateCheck?.close()
+        releaseUpdateCheck = null
         handler.removeCallbacks(statusPoll)
         super.onDestroy()
     }
@@ -246,6 +256,21 @@ class MainActivity : Activity() {
 
         val maintenanceSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            updateCheckSwitch = Switch(this@MainActivity).apply {
+                text = "Check updates on startup"
+                textSize = 15f
+                setTextColor(COLOR_TEXT)
+                isChecked = streamPrefs.getBoolean(PREF_CHECK_UPDATES_ON_STARTUP, true)
+                setPadding(0, dp(10), 0, dp(2))
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    thumbTintList = ColorStateList.valueOf(COLOR_ACCENT)
+                    trackTintList = ColorStateList.valueOf(COLOR_ACCENT_DIM)
+                }
+                setOnCheckedChangeListener { _, checked ->
+                    streamPrefs.edit().putBoolean(PREF_CHECK_UPDATES_ON_STARTUP, checked).apply()
+                }
+            }
+            addView(updateCheckSwitch)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 addView(actionButton("Add Quick Settings tile", ButtonTone.SECONDARY).apply {
                     setOnClickListener { requestAddQuickSettingsTile() }
@@ -553,6 +578,47 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun checkForReleaseUpdateOnStartup() {
+        if (!streamPrefs.getBoolean(PREF_CHECK_UPDATES_ON_STARTUP, true)) return
+        val installedVersion = installedVersionName()
+        releaseUpdateCheck?.close()
+        releaseUpdateCheck = ReleaseUpdateChecker().check(installedVersion) { result ->
+            releaseUpdateCheck = null
+            result.getOrNull()?.let { latestRelease ->
+                if (!isFinishing && !isDestroyed) {
+                    showReleaseUpdateDialog(latestRelease, installedVersion)
+                }
+            }
+        }
+    }
+
+    private fun showReleaseUpdateDialog(releaseInfo: ReleaseInfo, installedVersion: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Solaris ${releaseInfo.versionName} available")
+            .setMessage("Installed version: $installedVersion\nLatest release: ${releaseInfo.tagName}\n\nOpen GitHub to download it?")
+            .setNegativeButton("Later", null)
+            .setPositiveButton("Open release") { _, _ -> openReleaseInBrowser(releaseInfo.htmlUrl) }
+            .show()
+    }
+
+    private fun openReleaseInBrowser(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        runCatching { startActivity(intent) }
+            .onFailure {
+                Toast.makeText(this, "No browser available to open release page", Toast.LENGTH_LONG).show()
+            }
+    }
+
+    private fun installedVersionName(): String =
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0)).versionName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0).versionName
+            }.orEmpty()
+        }.getOrDefault("0.0.0")
+
     private fun applyPairingPinFromInput() {
         val pin = pairingPinInput.text.toString().trim()
         if (!ProjectionStreamService.setPendingPairingPin(pin)) {
@@ -621,6 +687,7 @@ class MainActivity : Activity() {
             .putInt(PREF_FPS_INDEX, fpsSpinner.selectedItemPosition)
             .putInt(PREF_BITRATE_MBPS, bitrateMbps)
             .putBoolean(PREF_AUDIO_ENABLED, audioSwitch.isChecked)
+            .putBoolean(PREF_CHECK_UPDATES_ON_STARTUP, updateCheckSwitch.isChecked)
             .putInt(PREF_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
             .apply()
     }
@@ -635,6 +702,7 @@ class MainActivity : Activity() {
         val editor = streamPrefs.edit()
             .putInt(PREF_SETTINGS_VERSION, CURRENT_SETTINGS_VERSION)
             .putBoolean(PREF_AUDIO_ENABLED, true)
+            .putBoolean(PREF_CHECK_UPDATES_ON_STARTUP, true)
         if (version < 4) {
             editor
                 .putInt(PREF_CODEC_INDEX, CodecPreference.H264.ordinal)
@@ -779,8 +847,9 @@ class MainActivity : Activity() {
         private const val PREF_FPS_INDEX = "fps_index"
         private const val PREF_BITRATE_MBPS = "bitrate_mbps"
         private const val PREF_AUDIO_ENABLED = "audio_enabled"
+        private const val PREF_CHECK_UPDATES_ON_STARTUP = "check_updates_on_startup"
         private const val PREF_SETTINGS_VERSION = "settings_version"
-        private const val CURRENT_SETTINGS_VERSION = 5
+        private const val CURRENT_SETTINGS_VERSION = 6
         private val FPS_OPTIONS = listOf(30, 45, 60, 90, 120)
 
         private const val COLOR_BLACK = 0xFF000000.toInt()
