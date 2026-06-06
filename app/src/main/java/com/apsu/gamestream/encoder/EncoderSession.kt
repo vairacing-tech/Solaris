@@ -72,6 +72,18 @@ class EncoderSession(
         }
     }
 
+    fun setVideoBitrate(bitrate: Int): Boolean {
+        val codec = codec ?: return false
+        return runCatching {
+            codec.setParameters(Bundle().apply {
+                putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrate.coerceAtLeast(1))
+            })
+            true
+        }.getOrElse {
+            false
+        }
+    }
+
     fun stop() {
         val mediaCodec = codec
         codec = null
@@ -96,13 +108,11 @@ class EncoderSession(
                 if (buffer != null && info.size > 0) {
                     buffer.position(info.offset)
                     buffer.limit(info.offset + info.size)
-                    val bytes = ByteArray(info.size)
-                    buffer.get(bytes)
+                    val normalized = AnnexBNormalizer.from(buffer)
                     if ((info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                        codecConfig = normalizeAnnexB(bytes)
+                        codecConfig = normalized
                         return
                     }
-                    val normalized = normalizeAnnexB(bytes)
                     val frameFlags = if (isKeyFrame(info.flags, normalized)) {
                         info.flags or MediaCodec.BUFFER_FLAG_KEY_FRAME
                     } else {
@@ -157,43 +167,9 @@ class EncoderSession(
             if (!format.containsKey(key)) return@mapNotNull null
             format.getByteBuffer(key)?.let { buffer ->
                 val duplicate = buffer.duplicate()
-                val bytes = ByteArray(duplicate.remaining())
-                duplicate.get(bytes)
-                normalizeAnnexB(bytes)
+                AnnexBNormalizer.from(duplicate)
             }
-        }.fold(ByteArray(0)) { acc, bytes -> acc + bytes }
-    }
-
-    private fun normalizeAnnexB(bytes: ByteArray): ByteArray {
-        if (bytes.hasAnnexBStartCode()) return bytes
-        return convertLengthPrefixedNalUnits(bytes)
-    }
-
-    private fun convertLengthPrefixedNalUnits(bytes: ByteArray): ByteArray {
-        val out = ArrayList<Byte>(bytes.size + 16)
-        var offset = 0
-        while (offset + 4 <= bytes.size) {
-            val length = ((bytes[offset].toInt() and 0xFF) shl 24) or
-                ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
-                ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
-                (bytes[offset + 3].toInt() and 0xFF)
-            if (length <= 0 || offset + 4 + length > bytes.size) {
-                return bytes
-            }
-            out.add(0)
-            out.add(0)
-            out.add(0)
-            out.add(1)
-            for (i in 0 until length) {
-                out.add(bytes[offset + 4 + i])
-            }
-            offset += 4 + length
-        }
-        return if (offset == bytes.size && out.isNotEmpty()) out.toByteArray() else bytes
-    }
-
-    private fun ByteArray.hasAnnexBStartCode(): Boolean {
-        return findStartCodeOffset(0) >= 0
+        }.concatenate()
     }
 
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
@@ -204,18 +180,15 @@ class EncoderSession(
         return true
     }
 
-    private fun ByteArray.findStartCodeOffset(fromIndex: Int): Int {
-        if (size < 3) return -1
-        var index = fromIndex.coerceAtLeast(0)
-        while (index <= size - 3) {
-            if (this[index] == 0.toByte() && this[index + 1] == 0.toByte()) {
-                if (this[index + 2] == 1.toByte()) return index
-                if (index <= size - 4 && this[index + 2] == 0.toByte() && this[index + 3] == 1.toByte()) {
-                    return index
-                }
-            }
-            index++
+    private fun List<ByteArray>.concatenate(): ByteArray {
+        if (isEmpty()) return ByteArray(0)
+        if (size == 1) return first()
+        val output = ByteArray(sumOf { it.size })
+        var offset = 0
+        for (bytes in this) {
+            System.arraycopy(bytes, 0, output, offset, bytes.size)
+            offset += bytes.size
         }
-        return -1
+        return output
     }
 }

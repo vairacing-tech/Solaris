@@ -16,6 +16,7 @@ class GameStreamServer(
     context: Context,
     initialPin: String?,
     private val onIdrRequested: () -> Unit,
+    private val onVideoCongestion: () -> Unit,
     private val onStreamConfigRequested: (StreamConfig) -> String?,
     private val onPinChanged: (String) -> Unit,
     private val onLog: (String) -> Unit,
@@ -55,6 +56,9 @@ class GameStreamServer(
             onPeerReady = {
                 onLog("Video UDP peer ready; requesting IDR frame")
                 onIdrRequested()
+            },
+            onCongestion = {
+                onVideoCongestion()
             },
             onLog = onLog,
         ).also { it.start() }

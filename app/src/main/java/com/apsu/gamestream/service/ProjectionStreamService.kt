@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import com.apsu.gamestream.R
 import com.apsu.gamestream.audio.AudioCaptureSession
@@ -48,6 +49,8 @@ class ProjectionStreamService : Service() {
     private var fallbackConfig: StreamConfig = StreamConfig()
     private var activeStreamConfig: StreamConfig? = null
     private var activeEncoderMime: String? = null
+    private var congestionAdjustedBitrate: Int? = null
+    private var lastCongestionActionMs = 0L
     private val mainHandler = Handler(Looper.getMainLooper())
     private var idrHeartbeatActive = false
 
@@ -127,6 +130,7 @@ class ProjectionStreamService : Service() {
                 context = applicationContext,
                 initialPin = pin,
                 onIdrRequested = { encoderSession?.requestSyncFrame() },
+                onVideoCongestion = { handleVideoCongestion() },
                 onStreamConfigRequested = { requestedConfig -> startOrRestartCapture(requestedConfig) },
                 onPinChanged = { newPin -> currentPin = newPin },
                 onLog = { log(it) },
@@ -210,6 +214,8 @@ class ProjectionStreamService : Service() {
 
             activeStreamConfig = config
             activeEncoderMime = encoderInfo.mime
+            congestionAdjustedBitrate = config.bitrate
+            lastCongestionActionMs = 0L
             startIdrHeartbeat()
             updateStatus(
                 ServerState.STREAMING,
@@ -235,6 +241,41 @@ class ProjectionStreamService : Service() {
         encoderSession = null
         activeStreamConfig = null
         activeEncoderMime = null
+        congestionAdjustedBitrate = null
+        lastCongestionActionMs = 0L
+    }
+
+    @Synchronized
+    private fun handleVideoCongestion() {
+        val encoder = encoderSession ?: return
+        encoder.requestSyncFrame()
+
+        val config = activeStreamConfig ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCongestionActionMs < CONGESTION_BITRATE_COOLDOWN_MS) return
+
+        val currentBitrate = congestionAdjustedBitrate ?: config.bitrate
+        val floorBitrate = congestionBitrateFloor(config)
+        if (currentBitrate <= floorBitrate) {
+            lastCongestionActionMs = now
+            log("Video congestion: requested IDR; bitrate already at floor ${formatMbps(floorBitrate)} Mbps")
+            return
+        }
+
+        val nextBitrate = ((currentBitrate.toLong() * CONGESTION_BITRATE_SCALE_PERCENT) / 100L)
+            .toInt()
+            .coerceAtLeast(floorBitrate)
+        if (encoder.setVideoBitrate(nextBitrate)) {
+            congestionAdjustedBitrate = nextBitrate
+            lastCongestionActionMs = now
+            log(
+                "Video congestion: reduced encoder bitrate " +
+                    "${formatMbps(currentBitrate)} -> ${formatMbps(nextBitrate)} Mbps and requested IDR",
+            )
+        } else {
+            lastCongestionActionMs = now
+            log("Video congestion: requested IDR; encoder rejected dynamic bitrate change")
+        }
     }
 
     private fun startAudioPipeline(activeProjection: MediaProjection, server: GameStreamServer) {
@@ -370,6 +411,20 @@ class ProjectionStreamService : Service() {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
+    private fun congestionBitrateFloor(config: StreamConfig): Int {
+        val pixels = config.width * config.height
+        val resolutionFloor = when {
+            pixels >= 2560 * 1440 -> 8_000_000
+            pixels >= 1920 * 1080 -> 5_000_000
+            else -> 2_500_000
+        }
+        val originalFloor = ((config.bitrate.toLong() * CONGESTION_MIN_ORIGINAL_PERCENT) / 100L).toInt()
+        return minOf(config.bitrate, maxOf(resolutionFloor, originalFloor))
+    }
+
+    private fun formatMbps(bitrate: Int): String =
+        String.format(Locale.US, "%.1f", bitrate / 1_000_000.0)
+
     private fun notification(text: String): Notification {
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
@@ -473,6 +528,9 @@ class ProjectionStreamService : Service() {
         const val ACTION_STOP = "com.apsu.gamestream.STOP"
         private const val MAX_RECENT_LOGS = 80
         private const val IDR_HEARTBEAT_MS = 1_000L
+        private const val CONGESTION_BITRATE_COOLDOWN_MS = 6_000L
+        private const val CONGESTION_BITRATE_SCALE_PERCENT = 85
+        private const val CONGESTION_MIN_ORIGINAL_PERCENT = 45
         private val logLock = Any()
         private val timestampFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
         private val recentLogLines = mutableListOf<String>()

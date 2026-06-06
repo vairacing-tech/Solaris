@@ -71,6 +71,9 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
   - GOP corto de 1 segundo
   - IDR inicial y respuesta a peticiones IDR de cliente
   - deteccion de IDR por NAL H.264/HEVC, no solo por `MediaCodec.BufferInfo.flags`, para reinyectar SPS/PPS/VPS aunque encoders Qualcomm no marquen keyframe
+  - salida de encoder desacoplada del envio UDP mediante cola corta y un hilo `apsu-video-rtp-sender`, para que `MediaCodec.Callback` no quede bloqueado por red
+  - empaquetado RTP/NV sobre buffer reutilizable de 1500 bytes, sin `ByteBuffer.allocate` ni `DatagramPacket` por paquete
+  - conversion Annex B directa desde `ByteBuffer` con salida de tamano fijo, evitando `ArrayList<Byte>` y copias intermedias por frame
 - Protocolo GameStream MVP:
   - NVHTTP en TCP `47989`
   - HTTPS en TCP `47984`
@@ -98,6 +101,9 @@ El APK debug actual es instalable y arranca un servidor MVP con captura Android 
 - Video RTP:
   - recibe ping UDP del cliente y fija peer
   - empaqueta frames `EncodedFrame` como RTP/NV video packets
+  - encola como maximo 3 frames pendientes; si la red no mantiene ritmo, descarta frames antiguos antes de acumular latencia
+  - los keyframes limpian la cola pendiente para priorizar la recuperacion visual del cliente
+  - ante congestion, solicita IDR y reduce el bitrate del encoder en caliente al 85% con cooldown de 6 segundos hasta un suelo dependiente de resolucion/configuracion
   - mantiene separados el RTP sequence de 16 bits y `NV_VIDEO_PACKET.streamPacketIndex` de 24 bits; el segundo debe sobrevivir al wrap de 65k paquetes para evitar congelados alrededor de un minuto
   - genera RTP timestamps desde `frameIndex` y FPS negociado, no desde PTS del encoder, para evitar irregularidades de `MediaCodec` con frames repetidos
   - lee `x-nv-video[0].packetSize` del `ANNOUNCE` RTSP y adapta el payload a 1024/1392 segun cliente
@@ -152,7 +158,7 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 - El control/input remoto se acepta para que Moonlight no falle, pero se ignora; no inyecta tactil, mando, teclado ni raton en Android.
 - Audio de red implementado como Opus/RTP stereo 48 kHz sin FEC ni cifrado. Si Android niega la captura o si la app origen bloquea `AudioPlaybackCapture`, el video continua y la app registra `Audio capture disabled` o `Audio capture still silent`.
 - Audio surround, FEC de audio y cifrado AES-CBC de audio no estan implementados.
-- No hay FEC ni retransmision avanzada en video.
+- No hay FEC ni retransmision avanzada en video; el control de congestion actual solo descarta frames antiguos, fuerza IDR y baja bitrate dinamicamente.
 - No hay RTSP cifrado ni control stream ENet moderno.
 - La compatibilidad HEVC con Moonlight debe probarse en dispositivo real; el encoder hardware y el SDP estan implementados, pero el primer objetivo de interoperabilidad es H.264.
 - El host no empieza a codificar al iniciar el servicio; espera `ANNOUNCE`. Si el cliente no llega a RTSP, no habra frames ni carga de encoder.
@@ -163,7 +169,7 @@ Si la imagen se congela pero el servicio sigue en foreground y los logs siguen m
 - Mejorar audio: FEC de audio, cifrado opcional, estadisticas de paquetes y selector de bitrate.
 - Input remoto: traducir mando, teclado, raton y tactil del cliente a eventos Android cuando sea viable sin root.
 - Control stream moderno: implementar ENet/AES-GCM para perfiles GameStream recientes en vez de depender del perfil legacy TCP.
-- FEC/retransmision y control de congestion para video RTP.
+- FEC/retransmision, estadisticas de perdida y recuperacion gradual de bitrate para video RTP.
 - Perfil HEVC validado extremo a extremo, incluido fallback claro a H.264 si el cliente o encoder falla.
 - Pruebas instrumentadas reales para TLS/NVHTTP/RTSP y creacion de encoder con `COLOR_FormatSurface`.
 - Pulido visual adicional: controles mas densos para landscape/Odin, iconografia y estados de sesion mas ricos.
@@ -196,6 +202,7 @@ flowchart LR
 - `StreamConfig.kt`: codec, resolucion, FPS, bitrate, audio y baja latencia.
 - `EncoderSelector.kt`: seleccion y validacion de encoder hardware.
 - `EncoderSession.kt`: configuracion `MediaCodec`, salida Annex B y keyframes con CSD.
+- `AnnexBNormalizer.kt`: normalizacion directa de buffers Annex B o NAL length-prefixed sin estructuras intermedias por frame.
 - `ProjectionStreamService.kt`: lifecycle de captura, encoder y servidores.
 - `NvHttpServer.kt`: endpoints `serverinfo`, `applist`, `pair`, `launch`, `resume`, `cancel`, `pin`.
 - `RtspServer.kt`: `OPTIONS`, `DESCRIBE`, `SETUP`, `ANNOUNCE`, `PLAY`, `TEARDOWN`.
